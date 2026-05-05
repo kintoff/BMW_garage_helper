@@ -1,5 +1,6 @@
 package pl.garage.bmwassistant
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -44,6 +45,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,6 +93,30 @@ private data class GarageTask(
     val status: String,
 )
 
+private class VehicleStorage(context: Context) {
+    private val preferences = context.getSharedPreferences("garage_data", Context.MODE_PRIVATE)
+
+    fun loadVehicles(): List<Vehicle> {
+        val rawVehicles = preferences.getString("vehicles", null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(rawVehicles)
+            List(array.length()) { index ->
+                array.getJSONObject(index).toVehicle()
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveVehicles(vehicles: List<Vehicle>) {
+        val array = JSONArray()
+        vehicles.forEach { vehicle ->
+            array.put(vehicle.toJson())
+        }
+        preferences.edit()
+            .putString("vehicles", array.toString())
+            .apply()
+    }
+}
+
 @Composable
 private fun GarageTheme(content: @Composable () -> Unit) {
     MaterialTheme(
@@ -108,7 +136,13 @@ private fun GarageTheme(content: @Composable () -> Unit) {
 
 @Composable
 private fun GarageApp() {
-    val vehicles = remember { mutableStateListOf<Vehicle>() }
+    val context = LocalContext.current
+    val vehicleStorage = remember { VehicleStorage(context.applicationContext) }
+    val vehicles = remember {
+        mutableStateListOf<Vehicle>().apply {
+            addAll(vehicleStorage.loadVehicles())
+        }
+    }
     var isAddingVehicle by rememberSaveable { mutableStateOf(false) }
     var vehiclePendingDeletion by remember { mutableStateOf<Vehicle?>(null) }
 
@@ -117,6 +151,7 @@ private fun GarageApp() {
             vehicle = vehicle,
             onConfirm = {
                 vehicles.remove(vehicle)
+                vehicleStorage.saveVehicles(vehicles)
                 vehiclePendingDeletion = null
             },
             onDismiss = { vehiclePendingDeletion = null }
@@ -127,6 +162,7 @@ private fun GarageApp() {
         vehicles.isEmpty() -> AddVehicleWizard(
             onVehicleCreated = { vehicle ->
                 vehicles.add(vehicle)
+                vehicleStorage.saveVehicles(vehicles)
                 isAddingVehicle = false
             }
         )
@@ -134,6 +170,7 @@ private fun GarageApp() {
         isAddingVehicle -> AddVehicleWizard(
             onVehicleCreated = { vehicle ->
                 vehicles.add(vehicle)
+                vehicleStorage.saveVehicles(vehicles)
                 isAddingVehicle = false
             },
             onCancel = { isAddingVehicle = false }
@@ -147,6 +184,27 @@ private fun GarageApp() {
         )
     }
 }
+
+private fun Vehicle.toJson(): JSONObject = JSONObject()
+    .put("brand", brand)
+    .put("model", model)
+    .put("generation", generation)
+    .put("engine", engine)
+    .put("year", year)
+    .put("vin", vin)
+    .put("mileage", mileage)
+    .put("note", note)
+
+private fun JSONObject.toVehicle(): Vehicle = Vehicle(
+    brand = optString("brand"),
+    model = optString("model"),
+    generation = optString("generation"),
+    engine = optString("engine"),
+    year = optString("year"),
+    vin = optString("vin"),
+    mileage = optString("mileage"),
+    note = optString("note")
+)
 
 @Composable
 private fun AddVehicleWizard(
