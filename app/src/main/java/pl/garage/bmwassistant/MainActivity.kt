@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -109,6 +110,18 @@ private fun GarageTheme(content: @Composable () -> Unit) {
 private fun GarageApp() {
     val vehicles = remember { mutableStateListOf<Vehicle>() }
     var isAddingVehicle by rememberSaveable { mutableStateOf(false) }
+    var vehiclePendingDeletion by remember { mutableStateOf<Vehicle?>(null) }
+
+    vehiclePendingDeletion?.let { vehicle ->
+        DeleteVehicleDialog(
+            vehicle = vehicle,
+            onConfirm = {
+                vehicles.remove(vehicle)
+                vehiclePendingDeletion = null
+            },
+            onDismiss = { vehiclePendingDeletion = null }
+        )
+    }
 
     when {
         vehicles.isEmpty() -> AddVehicleWizard(
@@ -129,7 +142,8 @@ private fun GarageApp() {
         else -> GarageDashboard(
             vehicles = vehicles,
             activeTasks = sampleTasksFor(vehicles.first()),
-            onAddVehicle = { isAddingVehicle = true }
+            onAddVehicle = { isAddingVehicle = true },
+            onDeleteVehicle = { vehiclePendingDeletion = it }
         )
     }
 }
@@ -269,6 +283,7 @@ private fun GarageDashboard(
     vehicles: List<Vehicle>,
     activeTasks: List<GarageTask>,
     onAddVehicle: () -> Unit,
+    onDeleteVehicle: (Vehicle) -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -300,7 +315,10 @@ private fun GarageDashboard(
             }
 
             items(vehicles) { vehicle ->
-                VehicleCard(vehicle)
+                VehicleCard(
+                    vehicle = vehicle,
+                    onDelete = { onDeleteVehicle(vehicle) }
+                )
             }
 
             item {
@@ -320,6 +338,33 @@ private fun GarageDashboard(
             }
         }
     }
+}
+
+@Composable
+private fun DeleteVehicleDialog(
+    vehicle: Vehicle,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Usunac profil auta?") },
+        text = {
+            Text(
+                text = "Profil ${vehicle.displayName.ifBlank { "BMW" }} zostanie usuniety z aktualnej listy. W kolejnym kroku podepniemy to pod lokalna baze danych."
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Usun")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
 }
 
 @Composable
@@ -400,7 +445,10 @@ private fun SectionTitle(title: String) {
 }
 
 @Composable
-private fun VehicleCard(vehicle: Vehicle) {
+private fun VehicleCard(
+    vehicle: Vehicle,
+    onDelete: () -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -444,6 +492,15 @@ private fun VehicleCard(vehicle: Vehicle) {
                 text = vehicle.note.ifBlank { "Brak notatki startowej." },
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDelete) {
+                    Text("Usun profil")
+                }
+            }
         }
     }
 }
@@ -576,7 +633,8 @@ private fun GarageDashboardPreview() {
                     note = ""
                 )
             ),
-            onAddVehicle = {}
+            onAddVehicle = {},
+            onDeleteVehicle = {}
         )
     }
 }
