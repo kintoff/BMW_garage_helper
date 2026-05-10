@@ -1,0 +1,17 @@
+package pl.garage.bmwassistant.model
+
+data class PartInventoryItem(
+    val id: String,
+    val oemPartNumber: String,
+    val manufacturerPartNumber: String,
+    val name: String,
+    val manufacturer: String,
+    val repairTitle: String?,
+    val quantity: Int,
+    val purchasePrice: String,
+    val realOemUrl: String?,
+    val photoUri: String? = null,
+) {
+    val partNumber: String
+        get() = oemPartNumber.ifBlank { manufacturerPartNumber }
+}
