@@ -64,6 +64,9 @@ fun VehicleOverviewScreen(
     val repairStorage = remember { RepairProjectStorage(context.applicationContext) }
     val partStorage = remember { PartInventoryStorage(context.applicationContext) }
     var selectedModule by remember { mutableStateOf<VehicleModule?>(null) }
+    var initialDocumentationRepairTitle by remember { mutableStateOf<String?>(null) }
+    var initialRepairListRepairTitle by remember { mutableStateOf<String?>(null) }
+    var shouldReturnFromDocumentationToRepairs by remember { mutableStateOf(false) }
     var repairProjects by remember(currentVehicle) {
         mutableStateOf(repairStorage.loadRepairs(currentVehicle).ifEmpty { sampleRepairsFor(currentVehicle) })
     }
@@ -106,11 +109,24 @@ fun VehicleOverviewScreen(
             repairs = repairProjects,
             repairDocumentation = repairDocumentation,
             inventoryParts = inventoryParts,
+            initialRepairTitle = initialRepairListRepairTitle,
             onRepairAdded = { repair, documentation ->
                 updateRepairs(repairProjects + repair)
                 updateRepairDocumentation(repairDocumentation + documentation)
             },
-            onBack = { selectedModule = null }
+            onOpenDocumentation = { documentation ->
+                initialDocumentationRepairTitle = documentation.repairTitle
+                initialRepairListRepairTitle = documentation.repairTitle
+                shouldReturnFromDocumentationToRepairs = true
+                selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
+            },
+            onInitialRepairClosed = {
+                initialRepairListRepairTitle = null
+            },
+            onBack = {
+                initialRepairListRepairTitle = null
+                selectedModule = null
+            }
         )
         return
     }
@@ -119,6 +135,8 @@ fun VehicleOverviewScreen(
         VehicleDocumentationScreen(
             vehicle = currentVehicle,
             repairDocumentation = repairDocumentation,
+            initialRepairTitle = initialDocumentationRepairTitle,
+            returnToPreviousModuleOnBack = shouldReturnFromDocumentationToRepairs,
             onDocumentationUpdated = { updatedDocumentation ->
                 updateRepairDocumentation(
                     repairDocumentation.map { documentation ->
@@ -132,7 +150,16 @@ fun VehicleOverviewScreen(
                     }
                 )
             },
-            onBack = { selectedModule = null }
+            onBack = {
+                initialDocumentationRepairTitle = null
+                if (shouldReturnFromDocumentationToRepairs) {
+                    shouldReturnFromDocumentationToRepairs = false
+                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                } else {
+                    initialRepairListRepairTitle = null
+                    selectedModule = null
+                }
+            }
         )
         return
     }

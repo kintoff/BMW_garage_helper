@@ -30,7 +30,7 @@ fun GarageTextField(
         singleLine = singleLine,
         minLines = minLines,
         keyboardOptions = KeyboardOptions(
-            capitalization = KeyboardCapitalization.Characters,
+            capitalization = KeyboardCapitalization.Sentences,
             keyboardType = keyboardType
         )
     )

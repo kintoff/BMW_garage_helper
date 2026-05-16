@@ -50,7 +50,10 @@ fun VehicleRepairListScreen(
     repairs: List<RepairProject>,
     repairDocumentation: List<RepairDocumentation>,
     inventoryParts: List<PartInventoryItem>,
+    initialRepairTitle: String? = null,
     onRepairAdded: (RepairProject, RepairDocumentation) -> Unit,
+    onOpenDocumentation: (RepairDocumentation) -> Unit,
+    onInitialRepairClosed: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     var expandedAreas by remember {
@@ -60,10 +63,17 @@ fun VehicleRepairListScreen(
     }
     var isChoosingRepairArea by remember { mutableStateOf(false) }
     var selectedAreaForNewRepair by remember { mutableStateOf<VehicleArea?>(null) }
-    var selectedRepair by remember { mutableStateOf<RepairProject?>(null) }
+    var selectedRepair by remember(initialRepairTitle, repairs) {
+        mutableStateOf(
+            initialRepairTitle?.let { repairTitle ->
+                repairs.firstOrNull { it.title == repairTitle }
+            }
+        )
+    }
 
     BackHandler(enabled = selectedRepair != null) {
         selectedRepair = null
+        onInitialRepairClosed()
     }
 
     selectedRepair?.let { repair ->
@@ -72,7 +82,11 @@ fun VehicleRepairListScreen(
             repair = repair,
             documentation = repairDocumentation.firstOrNull { it.repairTitle == repair.title },
             availableParts = inventoryParts.filter { it.repairTitle == repair.title },
-            onBack = { selectedRepair = null }
+            onOpenDocumentation = onOpenDocumentation,
+            onBack = {
+                selectedRepair = null
+                onInitialRepairClosed()
+            }
         )
         return
     }
@@ -451,6 +465,7 @@ private fun RepairDetailsScreen(
     repair: RepairProject,
     documentation: RepairDocumentation?,
     availableParts: List<PartInventoryItem>,
+    onOpenDocumentation: (RepairDocumentation) -> Unit,
     onBack: () -> Unit,
 ) {
     Surface(
@@ -499,7 +514,10 @@ private fun RepairDetailsScreen(
                         title = "Dokumentacja",
                         subtitle = documentation?.summary
                             ?: "Dokumentacja zostanie utworzona automatycznie dla nowej naprawy.",
-                        marker = documentation?.title ?: "Brak wpisu"
+                        marker = documentation?.title ?: "Brak wpisu",
+                        onClick = documentation?.let { doc ->
+                            { onOpenDocumentation(doc) }
+                        }
                     )
                     RepairDetailTile(
                         title = "Notatki",
@@ -522,9 +540,12 @@ private fun RepairDetailTile(
     title: String,
     subtitle: String,
     marker: String,
+    onClick: (() -> Unit)? = null,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -585,6 +606,7 @@ private fun VehicleRepairListScreenPreview() {
             repairDocumentation = emptyList(),
             inventoryParts = emptyList(),
             onRepairAdded = { _, _ -> },
+            onOpenDocumentation = {},
             onBack = {}
         )
     }

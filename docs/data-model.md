@@ -1,8 +1,8 @@
 # Struktura danych aplikacji
 
-Ten dokument opisuje docelowa strukture danych dla BMW Garage Assistant. Ma pomoc zrozumiec, jakie informacje aplikacja bedzie przechowywac i jak beda ze soba powiazane.
+Ten dokument opisuje strukture danych dla BMW Garage Assistant. Ma pomoc zrozumiec, jakie informacje aplikacja przechowuje teraz i jak beda ze soba powiazane po migracji do Room/SQLite.
 
-Na obecnym etapie aplikacja zapisuje tylko profile aut w prostym lokalnym magazynie. Docelowo te dane przeniesiemy do Room/SQLite.
+Na obecnym etapie aplikacja zapisuje profile aut, naprawy, czesci i dokumentacje napraw w prostym lokalnym magazynie. Docelowo te dane przeniesiemy do Room/SQLite.
 
 ## Glowna idea
 
@@ -15,6 +15,7 @@ Garage
         |
         +-- RepairProject
         +-- Part
+        +-- RepairDocumentation
         +-- GaragePhoto
         +-- DocumentReference
         +-- DiagnosticSession
@@ -136,7 +137,210 @@ Relacje:
 - naprawa moze miec wiele zdjec,
 - naprawa moze miec wiele czesci,
 - naprawa moze miec wiele zadan,
-- naprawa moze miec wiele dokumentow i linkow.
+- naprawa moze miec jedna glowna dokumentacje naprawy z linkami, schematami, momentami dokrecen, filmami i notatkami.
+
+## RepairDocumentation
+
+Dokumentacja przypisana do konkretnej naprawy. To obecnie najwazniejszy kontener wiedzy w aplikacji.
+
+Pola:
+
+```text
+title
+area
+repairTitle
+summary
+tisLinks
+tisDocuments
+torqueSpecs
+torqueDiagramImageUri
+torqueDiagramAssignments
+torqueTables
+youtubeLinks
+youtubeVideos
+personalNotes
+```
+
+Uwagi:
+
+- `tisLinks`, `torqueSpecs`, `torqueDiagramImageUri`, `torqueDiagramAssignments` i `youtubeLinks` sa polami legacy utrzymywanymi dla zgodnosci ze starszym zapisem.
+- Nowy zapis uzywa `tisDocuments`, `torqueTables`, `youtubeVideos` i `personalNotes`.
+- Jedna dokumentacja naprawy moze zawierac wiele tabel momentow dokrecen.
+- Kazda tabela momentow moze miec wlasny schemat i wlasne przypisania punktow.
+- Dokumentacja moze byc eksportowana i importowana jako jeden pakiet `.bmwdoc.zip`.
+
+Przyklad:
+
+```json
+{
+  "title": "Dokumentacja - swiece zarowe",
+  "area": "Engine",
+  "repairTitle": "Wymiana swiec zarowych",
+  "summary": "Materialy potrzebne do naprawy ukladu swiec zarowych.",
+  "tisDocuments": [
+    {
+      "title": "TIS - demontaz kolektora",
+      "url": "https://www.newtis.info/..."
+    }
+  ],
+  "torqueTables": [],
+  "youtubeVideos": [],
+  "personalNotes": []
+}
+```
+
+## TisDocumentationLink
+
+Link do procedury, schematu albo innego materialu TIS z czytelna nazwa.
+
+Pola:
+
+```text
+title
+url
+```
+
+Przyklad:
+
+```json
+{
+  "title": "TIS - momenty dokrecen kolektora",
+  "url": "https://www.newtis.info/..."
+}
+```
+
+## TorqueSpecTable
+
+Tabela momentow dokrecen. Jedna naprawa moze miec kilka takich tabel, bo moze dotyczyc kilku schematow lub podzespolow.
+
+Pola:
+
+```text
+id
+title
+torqueSpecs
+diagramImageUri
+diagramAssignments
+```
+
+Relacje:
+
+- tabela nalezy do jednej dokumentacji naprawy,
+- tabela ma wiele rekordow `TorqueSpec`,
+- tabela moze miec jeden schemat,
+- tabela moze miec wiele przypisan punktow `TorqueDiagramAssignment`.
+
+## TorqueSpec
+
+Pojedynczy rekord momentu dokrecenia.
+
+Pola:
+
+```text
+component
+type
+thread
+tighteningSpecifications
+torque
+source
+notes
+```
+
+Przyklad:
+
+```json
+{
+  "component": "3AZ Connection bolt",
+  "type": "M8",
+  "thread": "",
+  "tighteningSpecifications": "",
+  "torque": "25 Nm",
+  "source": "TIS screenshot",
+  "notes": ""
+}
+```
+
+## TorqueDiagramAssignment
+
+Przypisanie rekordu momentu dokrecenia do punktu na schemacie.
+
+Pola:
+
+```text
+torqueSpecIndex
+xRatio
+yRatio
+```
+
+`xRatio` i `yRatio` sa zapisane jako wartosci wzgledne obrazu, dzieki czemu punkt zachowuje pozycje po zmianie rozmiaru podgladu.
+
+## YoutubeVideo
+
+Film YouTube przypisany do dokumentacji naprawy.
+
+Pola:
+
+```text
+title
+url
+note
+```
+
+Tytul moze zostac pobrany automatycznie z YouTube przy dodawaniu linku. Uzytkownik moze go pozniej edytowac.
+
+## PersonalDocumentationItem
+
+Wpis w sekcji notatek wlasnych. Obsluguje tekst, zdjecia, filmy, dokumenty, linki i dowolne pliki.
+
+Pola:
+
+```text
+id
+type
+title
+text
+uri
+url
+```
+
+Typy:
+
+```text
+Text
+Photo
+Video
+Document
+Link
+File
+```
+
+Uwagi:
+
+- zdjecia i filmy sa pokazywane jako miniaturki,
+- zdjecia i filmy maja podglad po kliknieciu,
+- dokumenty i pliki sa otwierane przez systemowa liste aplikacji,
+- linki nie pokazuja surowego adresu na liscie, zeby nie zaburzac widoku.
+
+## RepairDocumentationPackage
+
+Eksportowany pakiet dokumentacji jednej naprawy.
+
+Format:
+
+```text
+*.bmwdoc.zip
+```
+
+Zawartosc:
+
+```text
+manifest.json
+assets/
+```
+
+`manifest.json` zawiera dane dokumentacji, a `assets/` zawiera zalaczniki skopiowane z lokalnych `Uri`, np. schematy, zdjecia, filmy, PDF-y i inne pliki.
+
+Przy imporcie zalaczniki sa kopiowane do prywatnego folderu aplikacji, a dokumentacja zostaje przypisana do aktualnie otwartej naprawy.
 
 ## Task
 
@@ -538,6 +742,7 @@ Nie musimy wdrazac wszystkiego od razu. Najblizszy sensowny krok to:
 ```text
 Vehicle
 RepairProject
+RepairDocumentation
 Task
 Part
 GaragePhoto
@@ -562,6 +767,13 @@ Kiedy przeniesiemy aplikacje do Room, struktura moze wygladac tak:
 ```text
 vehicles
 repair_projects
+repair_documentation
+tis_documentation_links
+torque_spec_tables
+torque_specs
+torque_diagram_assignments
+youtube_videos
+personal_documentation_items
 tasks
 parts
 garage_photos
@@ -578,6 +790,13 @@ Relacje:
 
 ```text
 vehicles.id -> repair_projects.vehicleId
+repair_projects.id -> repair_documentation.repairProjectId
+repair_documentation.id -> tis_documentation_links.repairDocumentationId
+repair_documentation.id -> torque_spec_tables.repairDocumentationId
+repair_documentation.id -> youtube_videos.repairDocumentationId
+repair_documentation.id -> personal_documentation_items.repairDocumentationId
+torque_spec_tables.id -> torque_specs.torqueSpecTableId
+torque_spec_tables.id -> torque_diagram_assignments.torqueSpecTableId
 vehicles.id -> parts.vehicleId
 vehicles.id -> garage_photos.vehicleId
 vehicles.id -> document_references.vehicleId
@@ -605,4 +824,3 @@ Dzieki temu mozna miec:
 - czesc przypisana tylko do auta,
 - notatke przypisana tylko do auta,
 - albo te same rzeczy przypisane dokladniej do konkretnego projektu naprawy.
-
