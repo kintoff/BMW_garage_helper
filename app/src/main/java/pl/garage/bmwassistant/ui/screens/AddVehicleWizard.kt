@@ -39,19 +39,30 @@ import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.WizardCard
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 
+private const val E61_CZESCIDOBMW_CATALOG_URL =
+    "https://czescidobmw.pl/vin/YQBW6/48808/" +
+        "\$" +
+        "*KwHa7v-Xr6DYg7q23YSC9oKWtrGv293a24OOmtjRkLCYmpqs5PHopqa5oZa2np_H__Shs6-9rNvU2YOPx5afi4eBioKJ8cSBhYCKzcjTzs6Fh5vY0czDyMuaj5OfmcjLoKXb2MyRAAAAAFI-z5U%3D" +
+        "\$"
+
 @Composable
 fun AddVehicleWizard(
     onVehicleCreated: (Vehicle) -> Unit,
     onCancel: (() -> Unit)? = null,
+    initialVehicle: Vehicle? = null,
+    title: String = "Wybierz auto do garazu",
+    subtitle: String = "Na poczatek dodamy profil auta. Pozniej ten kafelek otworzy naprawy, zdjecia, czesci i dokumenty.",
+    saveLabel: String = "Zapisz auto",
 ) {
-    var brand by rememberSaveable { mutableStateOf("BMW") }
-    var model by rememberSaveable { mutableStateOf("") }
-    var generation by rememberSaveable { mutableStateOf("") }
-    var engine by rememberSaveable { mutableStateOf("") }
-    var year by rememberSaveable { mutableStateOf("") }
-    var vin by rememberSaveable { mutableStateOf("") }
-    var mileage by rememberSaveable { mutableStateOf("") }
-    var note by rememberSaveable { mutableStateOf("") }
+    var brand by rememberSaveable { mutableStateOf(initialVehicle?.brand ?: "BMW") }
+    var model by rememberSaveable { mutableStateOf(initialVehicle?.model.orEmpty()) }
+    var generation by rememberSaveable { mutableStateOf(initialVehicle?.generation.orEmpty()) }
+    var engine by rememberSaveable { mutableStateOf(initialVehicle?.engine.orEmpty()) }
+    var year by rememberSaveable { mutableStateOf(initialVehicle?.year.orEmpty()) }
+    var vin by rememberSaveable { mutableStateOf(initialVehicle?.vin.orEmpty()) }
+    var mileage by rememberSaveable { mutableStateOf(initialVehicle?.mileage.orEmpty()) }
+    var note by rememberSaveable { mutableStateOf(initialVehicle?.note.orEmpty()) }
+    var partsCatalogUrl by rememberSaveable { mutableStateOf(initialVehicle?.partsCatalogUrl.orEmpty()) }
 
     val canSave = model.isNotBlank() && engine.isNotBlank()
 
@@ -66,23 +77,26 @@ fun AddVehicleWizard(
         ) {
             item {
                 Header(
-                    title = "Wybierz auto do garazu",
-                    subtitle = "Na poczatek dodamy profil auta. Pozniej ten kafelek otworzy naprawy, zdjecia, czesci i dokumenty."
+                    title = title,
+                    subtitle = subtitle
                 )
             }
 
-            item {
-                VehicleTemplateCard(
-                    onUseTemplate = {
-                        brand = "BMW"
-                        model = "E61 520d"
-                        generation = "E61"
-                        engine = "M47N2 2.0d"
-                        year = "2006"
-                        mileage = "285000"
-                        note = "Pierwsze auto w garazu. Start: tylna zwrotnica lewa, zardzewiala sruba."
-                    }
-                )
+            if (initialVehicle == null) {
+                item {
+                    VehicleTemplateCard(
+                        onUseTemplate = {
+                            brand = "BMW"
+                            model = "E61 520d"
+                            generation = "E61"
+                            engine = "M47N2 2.0d"
+                            year = "2006"
+                            mileage = "285000"
+                            partsCatalogUrl = E61_CZESCIDOBMW_CATALOG_URL
+                            note = "Pierwsze auto w garazu. Start: tylna zwrotnica lewa, zardzewiala sruba."
+                        }
+                    )
+                }
             }
 
             item {
@@ -138,6 +152,13 @@ fun AddVehicleWizard(
                         placeholder = "17 znakow"
                     )
                     GarageTextField(
+                        value = partsCatalogUrl,
+                        onValueChange = { partsCatalogUrl = it.trim() },
+                        label = "Link katalogu czescidobmw.pl",
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = "Opcjonalnie, gdy katalog po VIN wymaga gotowego linku"
+                    )
+                    GarageTextField(
                         value = note,
                         onValueChange = { note = it },
                         label = "Notatka startowa",
@@ -174,14 +195,16 @@ fun AddVehicleWizard(
                                     year = year.trim(),
                                     vin = vin.trim(),
                                     mileage = mileage.trim(),
-                                    note = note.trim()
+                                    note = note.trim(),
+                                    id = initialVehicle?.id.orEmpty().ifBlank { "vehicle-${System.currentTimeMillis()}" },
+                                    partsCatalogUrl = partsCatalogUrl.trim()
                                 )
                             )
                         },
                         enabled = canSave,
                         modifier = Modifier.weight(if (onCancel == null) 1f else 1.4f)
                     ) {
-                        Text("Zapisz auto")
+                        Text(saveLabel)
                     }
                 }
             }

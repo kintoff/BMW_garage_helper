@@ -9,6 +9,8 @@ data class Vehicle(
     val vin: String,
     val mileage: String,
     val note: String,
+    val id: String = "",
+    val partsCatalogUrl: String = "",
 ) {
     val displayName: String
         get() = listOf(brand, model, generation)

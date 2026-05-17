@@ -41,6 +41,7 @@ engineCode
 engineDescription
 year
 vin
+partsCatalogUrl
 mileage
 fuelType
 transmission
@@ -65,6 +66,7 @@ Przyklad:
   "engineDescription": "2.0d",
   "year": 2006,
   "vin": "WBAXXXXXXXXXXXXXX",
+  "partsCatalogUrl": "https://czescidobmw.pl/wyszukiwarka-vin/...",
   "mileage": 285000,
   "fuelType": "diesel",
   "transmission": "manual",
@@ -77,6 +79,7 @@ Relacje:
 
 - jedno auto ma wiele napraw,
 - jedno auto ma wiele czesci,
+- jedno auto ma jedna lub wiele list zakupow pogrupowanych wedlug napraw,
 - jedno auto ma wiele zdjec,
 - jedno auto ma wiele dokumentow,
 - jedno auto ma wiele sesji diagnostycznych.
@@ -136,8 +139,73 @@ Relacje:
 - naprawa nalezy do jednego auta,
 - naprawa moze miec wiele zdjec,
 - naprawa moze miec wiele czesci,
+- naprawa moze miec wiele pozycji listy zakupow,
 - naprawa moze miec wiele zadan,
 - naprawa moze miec jedna glowna dokumentacje naprawy z linkami, schematami, momentami dokrecen, filmami i notatkami.
+
+## ShoppingListItem
+
+Pozycja listy zakupow przypisana do konkretnej naprawy. Moze powstac recznie, po wyszukaniu numeru OEM w sklepie albo po wybraniu czesci ze schematu `czescidobmw.pl`.
+
+Pola:
+
+```text
+id
+partNumber
+manufacturerPartNumber
+name
+manufacturer
+repairTitle
+area
+quantity
+source
+price
+imageUri
+shopUrl
+realOemUrl
+```
+
+Uwagi:
+
+- `repairTitle` laczy pozycje z konkretna naprawa.
+- `area` pozwala grupowac liste zakupow wedlug obszaru auta, np. silnik, nadwozie, zawieszenie.
+- `source` wskazuje pochodzenie pozycji, np. recznie, `czescidobmw.pl`.
+- `shopUrl` prowadzi do strony sklepu lub schematu.
+- `realOemUrl` pozostaje polem legacy dla zgodnosci ze starszym zapisem, ale moze przechowywac rowniez link katalogowy.
+- Po oznaczeniu pozycji jako odebranej aplikacja tworzy wpis w magazynie czesci.
+
+Przyklad:
+
+```json
+{
+  "id": "czescidobmw-13537805725-1",
+  "partNumber": "13537805725",
+  "manufacturerPartNumber": "13537805725",
+  "name": "Zbiornik wysokiego cisnienia",
+  "manufacturer": "BMW / OEM",
+  "repairTitle": "Naprawa ukladu paliwowego",
+  "area": "Engine",
+  "quantity": 1,
+  "source": "czescidobmw.pl",
+  "shopUrl": "https://czescidobmw.pl/wyszukiwarka-vin/..."
+}
+```
+
+## CzescidobmwCatalog
+
+Integracja katalogu czesci z `czescidobmw.pl`.
+
+Zasada dzialania:
+
+1. Aplikacja pobiera VIN z profilu auta.
+2. VIN jest wysylany do endpointu `api/laximo/car/{VIN}`.
+3. Z odpowiedzi aplikacja odczytuje `vehicleId`.
+4. Katalog auta otwierany jest pod adresem `wyszukiwarka-vin/{VIN}/{vehicleId}`.
+5. Aplikacja odczytuje grupy katalogowe, np. `Silnik`, `Hamulce`, `Tylna os`.
+6. Dla wybranej naprawy pokazywane sa schematy z pasujacych grup.
+7. Po wybraniu schematu aplikacja pobiera obraz i liste czesci z pozycja, nazwa, iloscia i numerem OEM.
+
+`partsCatalogUrl` w profilu auta jest polem awaryjnym. Aplikacja uzywa go tylko wtedy, gdy VIN nie ma 17 znakow albo sklep nie zwroci katalogu po VIN.
 
 ## RepairDocumentation
 

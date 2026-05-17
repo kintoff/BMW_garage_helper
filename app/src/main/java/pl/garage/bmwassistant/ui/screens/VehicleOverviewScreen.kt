@@ -49,7 +49,9 @@ import pl.garage.bmwassistant.data.sampleRepairsFor
 import pl.garage.bmwassistant.data.sampleShoppingListFor
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
+import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.Vehicle
+import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.SectionTitle
 import pl.garage.bmwassistant.ui.theme.GarageTheme
@@ -58,15 +60,20 @@ import pl.garage.bmwassistant.ui.theme.GarageTheme
 fun VehicleOverviewScreen(
     vehicle: Vehicle?,
     onBack: () -> Unit,
+    onVehicleUpdated: (Vehicle) -> Unit = {},
 ) {
     val currentVehicle = vehicle ?: return
     val context = LocalContext.current
     val repairStorage = remember { RepairProjectStorage(context.applicationContext) }
     val partStorage = remember { PartInventoryStorage(context.applicationContext) }
     var selectedModule by remember { mutableStateOf<VehicleModule?>(null) }
+    var isEditingVehicle by remember { mutableStateOf(false) }
     var initialDocumentationRepairTitle by remember { mutableStateOf<String?>(null) }
     var initialRepairListRepairTitle by remember { mutableStateOf<String?>(null) }
+    var initialShoppingRepairTitle by remember { mutableStateOf<String?>(null) }
+    var initialShoppingArea by remember { mutableStateOf<VehicleArea?>(null) }
     var shouldReturnFromDocumentationToRepairs by remember { mutableStateOf(false) }
+    var shouldReturnFromShoppingToRepairs by remember { mutableStateOf(false) }
     var repairProjects by remember(currentVehicle) {
         mutableStateOf(repairStorage.loadRepairs(currentVehicle).ifEmpty { sampleRepairsFor(currentVehicle) })
     }
@@ -87,8 +94,36 @@ fun VehicleOverviewScreen(
         repairStorage.saveDocumentation(currentVehicle, documentation)
     }
 
+    fun appendShoppingItems(items: List<ShoppingListItem>) {
+        if (items.isEmpty()) return
+        val currentItems = if (partStorage.hasShoppingList(currentVehicle)) {
+            partStorage.loadShoppingList(currentVehicle)
+        } else {
+            sampleShoppingListFor(currentVehicle)
+        }
+        partStorage.saveShoppingList(currentVehicle, currentItems + items)
+    }
+
     BackHandler(enabled = selectedModule != null) {
         selectedModule = null
+    }
+
+    if (isEditingVehicle) {
+        BackHandler {
+            isEditingVehicle = false
+        }
+        AddVehicleWizard(
+            initialVehicle = currentVehicle,
+            title = "Edytuj profil auta",
+            subtitle = "Uzupelnij VIN i dane auta. VIN wykorzystamy do pobierania schematow z czescidobmw.pl.",
+            saveLabel = "Zapisz zmiany",
+            onVehicleCreated = { updatedVehicle ->
+                onVehicleUpdated(updatedVehicle)
+                isEditingVehicle = false
+            },
+            onCancel = { isEditingVehicle = false }
+        )
+        return
     }
 
     if (selectedModule?.type == VehicleModuleType.Status) {
@@ -119,6 +154,16 @@ fun VehicleOverviewScreen(
                 initialRepairListRepairTitle = documentation.repairTitle
                 shouldReturnFromDocumentationToRepairs = true
                 selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
+            },
+            onOpenShoppingList = { repair ->
+                initialShoppingRepairTitle = repair.title
+                initialShoppingArea = repair.area
+                initialRepairListRepairTitle = repair.title
+                shouldReturnFromShoppingToRepairs = true
+                selectedModule = vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
+            },
+            onAddShoppingItems = { items ->
+                appendShoppingItems(items)
             },
             onInitialRepairClosed = {
                 initialRepairListRepairTitle = null
@@ -165,12 +210,35 @@ fun VehicleOverviewScreen(
     }
 
     if (selectedModule?.type == VehicleModuleType.PartsStorage) {
+        val storedShoppingList = if (partStorage.hasShoppingList(currentVehicle)) {
+            partStorage.loadShoppingList(currentVehicle)
+        } else {
+            sampleShoppingListFor(currentVehicle)
+        }
         VehiclePartsStorageScreen(
             vehicle = currentVehicle,
             inventoryParts = sampleInventoryPartsFor(currentVehicle),
-            shoppingList = sampleShoppingListFor(currentVehicle),
+            shoppingList = storedShoppingList,
             consumables = sampleConsumablesFor(),
-            onBack = { selectedModule = null }
+            initialSection = if (initialShoppingRepairTitle == null) null else PartsStorageSection.Shopping,
+            initialShoppingRepairTitle = initialShoppingRepairTitle,
+            initialShoppingArea = initialShoppingArea,
+            onInitialShoppingClosed = {
+                initialShoppingRepairTitle = null
+                initialShoppingArea = null
+            },
+            onBack = {
+                if (shouldReturnFromShoppingToRepairs) {
+                    shouldReturnFromShoppingToRepairs = false
+                    initialShoppingRepairTitle = null
+                    initialShoppingArea = null
+                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                } else {
+                    initialShoppingRepairTitle = null
+                    initialShoppingArea = null
+                    selectedModule = null
+                }
+            }
         )
         return
     }
@@ -236,10 +304,18 @@ fun VehicleOverviewScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
+                                text = "VIN: ${currentVehicle.vin.ifBlank { "do uzupelnienia" }}",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                                maxLines = 1
+                            )
+                            Text(
                                 text = currentVehicle.note.ifBlank { "Brak notatki startowej." },
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                                 maxLines = 3
                             )
+                            TextButton(onClick = { isEditingVehicle = true }) {
+                                Text("Edytuj profil")
+                            }
                         }
                     }
                 }
@@ -289,7 +365,7 @@ private val vehicleModules = listOf(
     VehicleModule(
         type = VehicleModuleType.Documentation,
         title = "Notatki / Dokumentacja",
-        subtitle = "Zdjecia, PDF-y, linki, RealOEM i uwagi",
+        subtitle = "Zdjecia, PDF-y, linki, schematy i uwagi",
         accentColor = Color(0xFFB8A7FF)
     ),
     VehicleModule(

@@ -91,10 +91,12 @@ fun sampleInventoryPartsFor(vehicle: Vehicle): List<PartInventoryItem> = listOf(
 
 fun sampleShoppingListFor(vehicle: Vehicle): List<ShoppingListItem> =
     sampleRepairFor(vehicle).partsToIdentify.map { partName ->
+        val repair = sampleRepairFor(vehicle)
         ShoppingListItem(
             partNumber = "do ustalenia",
             name = partName,
-            repairTitle = sampleRepairFor(vehicle).title,
+            repairTitle = repair.title,
+            area = repair.area,
             quantity = 1,
             source = "RealOEM"
         )

@@ -4,7 +4,9 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import pl.garage.bmwassistant.model.PartInventoryItem
+import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.Vehicle
+import pl.garage.bmwassistant.model.VehicleArea
 
 class PartInventoryStorage(context: Context) {
     private val preferences = context.getSharedPreferences("garage_parts_data", Context.MODE_PRIVATE)
@@ -31,11 +33,42 @@ class PartInventoryStorage(context: Context) {
             .putString(vehicle.storageKey(), array.toString())
             .apply()
     }
+
+    fun loadShoppingList(vehicle: Vehicle): List<ShoppingListItem> {
+        val rawItems = preferences.getString(vehicle.shoppingStorageKey(), null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(rawItems)
+            List(array.length()) { index ->
+                array.getJSONObject(index).toShoppingListItem()
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun hasShoppingList(vehicle: Vehicle): Boolean =
+        preferences.contains(vehicle.shoppingStorageKey())
+
+    fun saveShoppingList(
+        vehicle: Vehicle,
+        items: List<ShoppingListItem>,
+    ) {
+        val array = JSONArray()
+        items.forEach { item ->
+            array.put(item.toJson())
+        }
+        preferences.edit()
+            .putString(vehicle.shoppingStorageKey(), array.toString())
+            .apply()
+    }
 }
 
 private fun Vehicle.storageKey(): String {
-    val stableId = vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } }
+    val stableId = id.ifBlank { vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } } }
     return "parts_$stableId"
+}
+
+private fun Vehicle.shoppingStorageKey(): String {
+    val stableId = id.ifBlank { vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } } }
+    return "shopping_$stableId"
 }
 
 private fun PartInventoryItem.toJson(): JSONObject = JSONObject()
@@ -61,4 +94,37 @@ private fun JSONObject.toPartInventoryItem(): PartInventoryItem = PartInventoryI
     purchasePrice = optString("purchasePrice"),
     realOemUrl = optString("realOemUrl").ifBlank { null },
     photoUri = optString("photoUri").ifBlank { null }
+)
+
+private fun ShoppingListItem.toJson(): JSONObject = JSONObject()
+    .put("id", id)
+    .put("partNumber", partNumber)
+    .put("manufacturerPartNumber", manufacturerPartNumber)
+    .put("name", name)
+    .put("manufacturer", manufacturer)
+    .put("repairTitle", repairTitle)
+    .put("area", area.name)
+    .put("quantity", quantity)
+    .put("source", source)
+    .put("price", price)
+    .put("imageUri", imageUri)
+    .put("shopUrl", shopUrl)
+    .put("realOemUrl", realOemUrl)
+
+private fun JSONObject.toShoppingListItem(): ShoppingListItem = ShoppingListItem(
+    id = optString("id"),
+    partNumber = optString("partNumber"),
+    manufacturerPartNumber = optString("manufacturerPartNumber"),
+    name = optString("name"),
+    manufacturer = optString("manufacturer"),
+    repairTitle = optString("repairTitle"),
+    area = optString("area")
+        .let { rawArea -> VehicleArea.entries.firstOrNull { it.name == rawArea } }
+        ?: VehicleArea.Service,
+    quantity = optInt("quantity", 1),
+    source = optString("source"),
+    price = optString("price"),
+    imageUri = optString("imageUri").ifBlank { null },
+    shopUrl = optString("shopUrl").ifBlank { null },
+    realOemUrl = optString("realOemUrl").ifBlank { null }
 )

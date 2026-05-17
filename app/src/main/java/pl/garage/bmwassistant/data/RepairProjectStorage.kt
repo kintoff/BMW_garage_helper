@@ -379,6 +379,6 @@ private fun JSONArray?.toStringList(): List<String> {
 }
 
 private fun Vehicle.storageKey(): String {
-    val stableId = vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } }
+    val stableId = id.ifBlank { vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } } }
     return stableId
 }

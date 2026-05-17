@@ -65,8 +65,10 @@ import pl.garage.bmwassistant.model.ConsumableItem
 import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.Vehicle
+import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
+import pl.garage.bmwassistant.ui.components.iconResource
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
@@ -87,6 +89,10 @@ fun VehiclePartsStorageScreen(
     inventoryParts: List<PartInventoryItem>,
     shoppingList: List<ShoppingListItem>,
     consumables: List<ConsumableItem>,
+    initialSection: PartsStorageSection? = null,
+    initialShoppingRepairTitle: String? = null,
+    initialShoppingArea: VehicleArea? = null,
+    onInitialShoppingClosed: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -94,21 +100,45 @@ fun VehiclePartsStorageScreen(
     var isAddingPart by remember { mutableStateOf(false) }
     var isAddingManualPart by remember { mutableStateOf(false) }
     var isExternalLookupVisible by remember { mutableStateOf(false) }
+    var isAddingShoppingItem by remember { mutableStateOf(false) }
     var partPendingEdit by remember { mutableStateOf<PartInventoryItem?>(null) }
     var partPendingDeletion by remember { mutableStateOf<PartInventoryItem?>(null) }
-    var selectedSection by remember { mutableStateOf<PartsStorageSection?>(null) }
+    var shoppingItemPendingEdit by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPendingDeletion by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var selectedSection by remember(initialSection) { mutableStateOf(initialSection) }
     var storedInventoryParts by remember(vehicle) {
         mutableStateOf(partStorage.loadParts(vehicle).ifEmpty { inventoryParts })
     }
+    var storedShoppingList by remember(vehicle) {
+        mutableStateOf(
+            if (partStorage.hasShoppingList(vehicle)) {
+                partStorage.loadShoppingList(vehicle)
+            } else {
+                shoppingList
+            }
+        )
+    }
     val allInventoryParts = storedInventoryParts
+    val allShoppingList = storedShoppingList
 
     fun updateStoredParts(parts: List<PartInventoryItem>) {
         storedInventoryParts = parts
         partStorage.saveParts(vehicle, parts)
     }
 
+    fun updateShoppingList(items: List<ShoppingListItem>) {
+        storedShoppingList = items
+        partStorage.saveShoppingList(vehicle, items)
+    }
+
     BackHandler(enabled = selectedSection != null) {
-        selectedSection = null
+        if (initialShoppingRepairTitle == null) {
+            selectedSection = null
+            onInitialShoppingClosed()
+        } else {
+            onBack()
+        }
     }
 
     if (isAddingPart) {
@@ -149,6 +179,46 @@ fun VehiclePartsStorageScreen(
         )
     }
 
+    if (isAddingShoppingItem) {
+        ShoppingPartLookupDialog(
+            nextId = nextShoppingItemId(storedShoppingList),
+            initialRepairTitle = initialShoppingRepairTitle.orEmpty(),
+            initialArea = initialShoppingArea ?: VehicleArea.Service,
+            onDismiss = { isAddingShoppingItem = false },
+            onSave = { item ->
+                updateShoppingList(storedShoppingList + item)
+                isAddingShoppingItem = false
+                selectedSection = PartsStorageSection.Shopping
+            }
+        )
+    }
+
+    shoppingItemPendingEdit?.let { item ->
+        EditShoppingItemDialog(
+            item = item,
+            onDismiss = { shoppingItemPendingEdit = null },
+            onSave = { updatedItem ->
+                updateShoppingList(
+                    storedShoppingList.map {
+                        if (it.stableId() == item.stableId()) updatedItem else it
+                    }
+                )
+                shoppingItemPendingEdit = null
+            }
+        )
+    }
+
+    shoppingItemPendingDeletion?.let { item ->
+        ConfirmDeleteShoppingItemDialog(
+            item = item,
+            onConfirm = {
+                updateShoppingList(storedShoppingList.filterNot { it.stableId() == item.stableId() })
+                shoppingItemPendingDeletion = null
+            },
+            onDismiss = { shoppingItemPendingDeletion = null }
+        )
+    }
+
     partPendingEdit?.let { part ->
         ManualPartEntryDialog(
             nextId = part.id,
@@ -172,6 +242,18 @@ fun VehiclePartsStorageScreen(
         )
     }
 
+    shoppingItemPendingReceive?.let { item ->
+        ReceiveShoppingItemDialog(
+            item = item,
+            onConfirm = {
+                updateStoredParts(storedInventoryParts + item.toInventoryPart(nextPartId(storedInventoryParts)))
+                updateShoppingList(storedShoppingList.filterNot { it.stableId() == item.stableId() })
+                shoppingItemPendingReceive = null
+            },
+            onDismiss = { shoppingItemPendingReceive = null }
+        )
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -183,7 +265,7 @@ fun VehiclePartsStorageScreen(
         ) {
             item {
                 TextButton(onClick = onBack) {
-                    Text("Wroc do auta")
+                    Text(if (initialShoppingRepairTitle == null) "Wroc do auta" else "Wroc do naprawy")
                 }
             }
 
@@ -205,8 +287,16 @@ fun VehiclePartsStorageScreen(
 
             selectedSection?.let { section ->
                 item {
-                    TextButton(onClick = { selectedSection = null }) {
-                        Text("Wroc do kafelkow magazynu")
+                    TextButton(
+                        onClick = {
+                            if (initialShoppingRepairTitle == null) {
+                                selectedSection = null
+                            } else {
+                                onBack()
+                            }
+                        }
+                    ) {
+                        Text(if (initialShoppingRepairTitle == null) "Wroc do kafelkow magazynu" else "Wroc do naprawy")
                     }
                 }
 
@@ -228,7 +318,16 @@ fun VehiclePartsStorageScreen(
 
                     PartsStorageSection.Shopping -> {
                         item {
-                            ShoppingListSection(shoppingList = shoppingList)
+                            ShoppingListSection(
+                                shoppingList = allShoppingList,
+                                initialRepairTitle = initialShoppingRepairTitle,
+                                onAddShoppingItem = { isAddingShoppingItem = true },
+                                onEditItem = { shoppingItemPendingEdit = it },
+                                onDeleteItem = { shoppingItemPendingDeletion = it },
+                                onReceiveItem = { item ->
+                                    shoppingItemPendingReceive = item
+                                }
+                            )
                         }
                     }
 
@@ -267,7 +366,7 @@ fun VehiclePartsStorageScreen(
                         eyebrow = "Polaczone z naprawami",
                         title = "Lista zakupow do napraw",
                         subtitle = "Rozwijana lista czesci pogrupowana wedlug konkretnej naprawy.",
-                        countLabel = "${shoppingList.size} pozycji",
+                        countLabel = "${allShoppingList.size} pozycji",
                         marker = "ZK",
                         onClick = { selectedSection = PartsStorageSection.Shopping }
                     )
@@ -323,7 +422,7 @@ private data class ParsedPartLabel(
     val manufacturer: String?,
 )
 
-private enum class PartsStorageSection(val title: String) {
+enum class PartsStorageSection(val title: String) {
     Inventory("Stan magazynu"),
     Shopping("Lista zakupow do napraw"),
     Consumables("Materialy eksploatacyjne"),
@@ -331,6 +430,26 @@ private enum class PartsStorageSection(val title: String) {
 
 private fun nextPartId(parts: List<PartInventoryItem>): String =
     ((parts.mapNotNull { it.id.toIntOrNull() }.maxOrNull() ?: 0) + 1).toString()
+
+private fun nextShoppingItemId(items: List<ShoppingListItem>): String =
+    "shopping-${(items.mapNotNull { it.id.removePrefix("shopping-").toIntOrNull() }.maxOrNull() ?: 0) + 1}"
+
+private fun ShoppingListItem.stableId(): String =
+    id.ifBlank { "$repairTitle|$partNumber|$manufacturerPartNumber|$name" }
+
+private fun ShoppingListItem.toInventoryPart(nextId: String): PartInventoryItem =
+    PartInventoryItem(
+        id = nextId,
+        oemPartNumber = partNumber.ifBlank { "do uzupelnienia" },
+        manufacturerPartNumber = manufacturerPartNumber.ifBlank { partNumber.ifBlank { "do uzupelnienia" } },
+        name = name,
+        manufacturer = manufacturer.ifBlank { "do uzupelnienia" },
+        repairTitle = repairTitle.ifBlank { null },
+        quantity = quantity,
+        purchasePrice = price.ifBlank { "do uzupelnienia" },
+        realOemUrl = realOemUrl,
+        photoUri = imageUri
+    )
 
 @Composable
 private fun PartsStorageTile(
@@ -950,33 +1069,159 @@ private fun PartsSection(
 }
 
 @Composable
-private fun ShoppingListSection(shoppingList: List<ShoppingListItem>) {
-    var expandedRepairs by remember(shoppingList) {
-        mutableStateOf(shoppingList.map { it.repairTitle }.toSet())
+private fun ShoppingListSection(
+    shoppingList: List<ShoppingListItem>,
+    initialRepairTitle: String?,
+    onAddShoppingItem: () -> Unit,
+    onEditItem: (ShoppingListItem) -> Unit,
+    onDeleteItem: (ShoppingListItem) -> Unit,
+    onReceiveItem: (ShoppingListItem) -> Unit,
+) {
+    var expandedRepairs by remember(shoppingList, initialRepairTitle) {
+        mutableStateOf(
+            if (initialRepairTitle.isNullOrBlank()) {
+                shoppingList.map { it.repairTitle }.toSet()
+            } else {
+                setOf(initialRepairTitle)
+            }
+        )
     }
-    val groupedItems = shoppingList.groupBy { it.repairTitle }
+    var expandedAreas by remember(shoppingList, initialRepairTitle) {
+        mutableStateOf(shoppingList.map { it.area }.toSet().ifEmpty { setOf(VehicleArea.Engine) })
+    }
+    val visibleItems = if (initialRepairTitle.isNullOrBlank()) {
+        shoppingList
+    } else {
+        shoppingList.filter { it.repairTitle == initialRepairTitle }
+    }
 
     PartsSection(
-        title = "Lista zakupow do napraw",
-        subtitle = "Czesci pogrupowane wedlug naprawy, z ktora sa bezposrednio polaczone.",
-        countLabel = "${shoppingList.size} pozycji"
+        title = initialRepairTitle?.let { "Lista zakupow: $it" } ?: "Lista zakupow do napraw",
+        subtitle = "Dodaj OEM, pobierz dostepne czesci ze sklepu, a po przyjeciu przenies pozycje do magazynu.",
+        countLabel = "${visibleItems.size} pozycji"
     ) {
-        if (groupedItems.isEmpty()) {
+        TextButton(onClick = onAddShoppingItem) {
+            Text("Dodaj czesc po OEM")
+        }
+        if (visibleItems.isEmpty()) {
             EmptyPartsRow("Brak czesci do kupienia.")
         } else {
-            groupedItems.forEach { (repairTitle, items) ->
-                ExpandableRepairShoppingGroup(
-                    repairTitle = repairTitle,
-                    items = items,
-                    isExpanded = repairTitle in expandedRepairs,
-                    onToggle = {
-                        expandedRepairs = if (repairTitle in expandedRepairs) {
-                            expandedRepairs - repairTitle
-                        } else {
-                            expandedRepairs + repairTitle
-                        }
+            if (initialRepairTitle == null) {
+                VehicleArea.entries.forEach { area ->
+                    val areaItems = visibleItems.filter { it.area == area }
+                    if (areaItems.isNotEmpty()) {
+                        ShoppingAreaSection(
+                            area = area,
+                            items = areaItems,
+                            expandedRepairs = expandedRepairs,
+                            isExpanded = area in expandedAreas,
+                            onAreaToggle = {
+                                expandedAreas = if (area in expandedAreas) {
+                                    expandedAreas - area
+                                } else {
+                                    expandedAreas + area
+                                }
+                            },
+                            onRepairToggle = { repairTitle ->
+                                expandedRepairs = if (repairTitle in expandedRepairs) {
+                                    expandedRepairs - repairTitle
+                                } else {
+                                    expandedRepairs + repairTitle
+                                }
+                            },
+                            onEditItem = onEditItem,
+                            onDeleteItem = onDeleteItem,
+                            onReceiveItem = onReceiveItem
+                        )
                     }
+                }
+            } else {
+                visibleItems.groupBy { it.repairTitle }.forEach { (repairTitle, items) ->
+                    ExpandableRepairShoppingGroup(
+                        repairTitle = repairTitle,
+                        items = items,
+                        isExpanded = repairTitle in expandedRepairs,
+                        onToggle = {
+                            expandedRepairs = if (repairTitle in expandedRepairs) {
+                                expandedRepairs - repairTitle
+                            } else {
+                                expandedRepairs + repairTitle
+                            }
+                        },
+                        onEditItem = onEditItem,
+                        onDeleteItem = onDeleteItem,
+                        onReceiveItem = onReceiveItem
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShoppingAreaSection(
+    area: VehicleArea,
+    items: List<ShoppingListItem>,
+    expandedRepairs: Set<String>,
+    isExpanded: Boolean,
+    onAreaToggle: () -> Unit,
+    onRepairToggle: (String) -> Unit,
+    onEditItem: (ShoppingListItem) -> Unit,
+    onDeleteItem: (ShoppingListItem) -> Unit,
+    onReceiveItem: (ShoppingListItem) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onAreaToggle),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource(area.iconResource()),
+                    contentDescription = area.label,
+                    modifier = Modifier.height(30.dp)
                 )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = area.label,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "${items.size} pozycji zakupowych",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                    )
+                }
+                Text(
+                    text = if (isExpanded) "Zwin" else "Rozwin",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            if (isExpanded) {
+                items.groupBy { it.repairTitle }.forEach { (repairTitle, repairItems) ->
+                    ExpandableRepairShoppingGroup(
+                        repairTitle = repairTitle,
+                        items = repairItems,
+                        isExpanded = repairTitle in expandedRepairs,
+                        onToggle = { onRepairToggle(repairTitle) },
+                        onEditItem = onEditItem,
+                        onDeleteItem = onDeleteItem,
+                        onReceiveItem = onReceiveItem
+                    )
+                }
             }
         }
     }
@@ -988,6 +1233,9 @@ private fun ExpandableRepairShoppingGroup(
     items: List<ShoppingListItem>,
     isExpanded: Boolean,
     onToggle: () -> Unit,
+    onEditItem: (ShoppingListItem) -> Unit,
+    onDeleteItem: (ShoppingListItem) -> Unit,
+    onReceiveItem: (ShoppingListItem) -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1026,7 +1274,12 @@ private fun ExpandableRepairShoppingGroup(
 
             if (isExpanded) {
                 items.forEach { item ->
-                    ShoppingListRow(item = item)
+                    ShoppingListRow(
+                        item = item,
+                        onEditItem = { onEditItem(item) },
+                        onDeleteItem = { onDeleteItem(item) },
+                        onReceiveItem = { onReceiveItem(item) }
+                    )
                 }
             }
         }
@@ -1044,12 +1297,326 @@ private fun InventoryPartRow(part: PartInventoryItem) {
 }
 
 @Composable
-private fun ShoppingListRow(item: ShoppingListItem) {
-    PartLikeRow(
-        title = item.name,
-        subtitle = "Nr: ${item.partNumber} / Zrodlo: ${item.source}",
-        meta = "Ilosc: ${item.quantity}",
-        relation = "Naprawa: ${item.repairTitle}"
+private fun ShoppingListRow(
+    item: ShoppingListItem,
+    onEditItem: () -> Unit,
+    onDeleteItem: () -> Unit,
+    onReceiveItem: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.width(82.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                PartPhotoContent(photoUri = item.imageUri)
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Text(
+                    text = item.name,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "OEM: ${item.partNumber} / Producent: ${item.manufacturerPartNumber.ifBlank { "do wyboru" }}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+                Text(
+                    text = "Ilosc: ${item.quantity} / Cena: ${item.price.ifBlank { "do sprawdzenia" }}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Naprawa: ${item.repairTitle} / ${item.source}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                TextButton(onClick = onReceiveItem) {
+                    Text("Przyjmij")
+                }
+                TextButton(onClick = onEditItem) {
+                    Text("Edytuj")
+                }
+                TextButton(onClick = onDeleteItem) {
+                    Text("Usun")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReceiveShoppingItemDialog(
+    item: ShoppingListItem,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var scanPreview by remember { mutableStateOf<Bitmap?>(null) }
+    var scanStatus by remember {
+        mutableStateOf("Mozesz przyjac czesc recznie albo zeskanowac etykiete przed przeniesieniem do magazynu.")
+    }
+    var scannedLabel by remember { mutableStateOf<ParsedPartLabel?>(null) }
+
+    fun recognizeBitmap(bitmap: Bitmap) {
+        scanPreview = bitmap
+        scanStatus = "Odczytuje etykiete..."
+        recognizePartLabelFromBitmap(
+            bitmap = bitmap,
+            onResult = { parsedLabel ->
+                scannedLabel = parsedLabel
+                val values = buildList {
+                    parsedLabel.oemPartNumber?.let { add("OEM: $it") }
+                    parsedLabel.manufacturerPartNumber?.let { add("producent: $it") }
+                    parsedLabel.manufacturer?.let { add("marka: $it") }
+                }
+                scanStatus = if (values.isEmpty()) {
+                    "Nie udalo sie pewnie odczytac etykiety. Nadal mozesz przyjac czesc recznie."
+                } else {
+                    "Skan odczytany: ${values.joinToString(" / ")}."
+                }
+            },
+            onError = { message -> scanStatus = message }
+        )
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            recognizeBitmap(bitmap)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Przyjecie do magazynu") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = item.name,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "OEM: ${item.partNumber} / ilosc: ${item.quantity} / naprawa: ${item.repairTitle}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+                Text(
+                    text = scanStatus,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.66f)
+                )
+                scanPreview?.let { bitmap ->
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Skan etykiety czesci",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                TextButton(onClick = { cameraLauncher.launch(null) }) {
+                    Text("Zeskanuj etykiete")
+                }
+                scannedLabel?.let { label ->
+                    Text(
+                        text = "Odczyt: ${label.oemPartNumber ?: item.partNumber}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Przenies do magazynu")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun EditShoppingItemDialog(
+    item: ShoppingListItem,
+    onDismiss: () -> Unit,
+    onSave: (ShoppingListItem) -> Unit,
+) {
+    var name by remember(item) { mutableStateOf(item.name) }
+    var oemPartNumber by remember(item) { mutableStateOf(item.partNumber) }
+    var manufacturerPartNumber by remember(item) { mutableStateOf(item.manufacturerPartNumber) }
+    var manufacturer by remember(item) { mutableStateOf(item.manufacturer) }
+    var repairTitle by remember(item) { mutableStateOf(item.repairTitle) }
+    var area by remember(item) { mutableStateOf(item.area) }
+    var quantity by remember(item) { mutableStateOf(item.quantity.toString()) }
+    var price by remember(item) { mutableStateOf(item.price) }
+    var source by remember(item) { mutableStateOf(item.source) }
+    var isAreaPickerVisible by remember { mutableStateOf(false) }
+    val quantityValue = quantity.toIntOrNull()
+    val canSave = name.isNotBlank() && repairTitle.isNotBlank() && quantityValue != null && quantityValue > 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edytuj pozycje zakupowa") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                GarageTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = "Nazwa czesci",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                GarageTextField(
+                    value = oemPartNumber,
+                    onValueChange = { oemPartNumber = it },
+                    label = "Kod OEM",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                GarageTextField(
+                    value = manufacturerPartNumber,
+                    onValueChange = { manufacturerPartNumber = it },
+                    label = "Nr producenta",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                GarageTextField(
+                    value = manufacturer,
+                    onValueChange = { manufacturer = it },
+                    label = "Producent",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                GarageTextField(
+                    value = repairTitle,
+                    onValueChange = { repairTitle = it },
+                    label = "Naprawa",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                TextButton(onClick = { isAreaPickerVisible = !isAreaPickerVisible }) {
+                    Text("Katalog: ${area.label}")
+                }
+                if (isAreaPickerVisible) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        VehicleArea.entries.forEach { candidate ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        area = candidate
+                                        isAreaPickerVisible = false
+                                    },
+                                color = if (candidate == area) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                } else {
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = candidate.label,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    color = if (candidate == area) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+                GarageTextField(
+                    value = quantity,
+                    onValueChange = { quantity = it.filter { character -> character.isDigit() } },
+                    label = "Ilosc",
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardType = KeyboardType.Number
+                )
+                GarageTextField(
+                    value = price,
+                    onValueChange = { price = it },
+                    label = "Cena",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                GarageTextField(
+                    value = source,
+                    onValueChange = { source = it },
+                    label = "Zrodlo",
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSave,
+                onClick = {
+                    onSave(
+                        item.copy(
+                            partNumber = oemPartNumber.trim(),
+                            manufacturerPartNumber = manufacturerPartNumber.trim(),
+                            name = name.trim(),
+                            manufacturer = manufacturer.trim(),
+                            repairTitle = repairTitle.trim(),
+                            area = area,
+                            quantity = quantityValue ?: item.quantity,
+                            source = source.trim().ifBlank { item.source },
+                            price = price.trim()
+                        )
+                    )
+                }
+            ) {
+                Text("Zapisz")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ConfirmDeleteShoppingItemDialog(
+    item: ShoppingListItem,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Usun z listy zakupow") },
+        text = {
+            Text("Czy usunac pozycje: ${item.name}?")
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Usun")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
     )
 }
 
@@ -1298,6 +1865,187 @@ private fun ManualPartEntryDialog(
                 }
             ) {
                 Text(if (initialPart == null) "Dodaj rekord" else "Zapisz zmiany")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ShoppingPartLookupDialog(
+    nextId: String,
+    initialRepairTitle: String,
+    initialArea: VehicleArea,
+    onDismiss: () -> Unit,
+    onSave: (ShoppingListItem) -> Unit,
+) {
+    var oemPartNumber by remember { mutableStateOf("") }
+    var repairTitle by remember { mutableStateOf(initialRepairTitle) }
+    var area by remember { mutableStateOf(initialArea) }
+    var isAreaPickerVisible by remember { mutableStateOf(false) }
+    var quantity by remember { mutableStateOf("1") }
+    var lookupResults by remember { mutableStateOf(emptyList<MockPartLookupResult>()) }
+    var selectedResult by remember { mutableStateOf<MockPartLookupResult?>(null) }
+    var isSearching by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+    val quantityValue = quantity.toIntOrNull()
+    val canSave = selectedResult != null && repairTitle.isNotBlank() && quantityValue != null && quantityValue > 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Lista zakupow") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Wpisz numer OEM. Aplikacja pobierze dostepne czesci, ceny i zdjecia z obslugiwanego sklepu BMW.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+                GarageTextField(
+                    value = repairTitle,
+                    onValueChange = { repairTitle = it },
+                    label = "Naprawa",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "np. Tylna zwrotnica lewa"
+                )
+                TextButton(onClick = { isAreaPickerVisible = !isAreaPickerVisible }) {
+                    Text("Katalog: ${area.label}")
+                }
+                if (isAreaPickerVisible) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        VehicleArea.entries.forEach { candidate ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        area = candidate
+                                        isAreaPickerVisible = false
+                                    },
+                                color = if (candidate == area) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                } else {
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = candidate.label,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    color = if (candidate == area) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+                GarageTextField(
+                    value = oemPartNumber,
+                    onValueChange = {
+                        oemPartNumber = it
+                        lookupResults = emptyList()
+                        selectedResult = null
+                        searchError = null
+                    },
+                    label = "Kod OEM",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "np. 33326763463"
+                )
+                GarageTextField(
+                    value = quantity,
+                    onValueChange = { quantity = it.filter { character -> character.isDigit() } },
+                    label = "Ilosc",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "1",
+                    keyboardType = KeyboardType.Number
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        enabled = oemPartNumber.isNotBlank() && !isSearching,
+                        onClick = {
+                            coroutineScope.launch {
+                                isSearching = true
+                                searchError = null
+                                selectedResult = null
+                                lookupResults = runCatching {
+                                    fetchCzescidobmwResults(oemPartNumber)
+                                }.recoverCatching {
+                                    listOf(mockPartLookup(oemPartNumber))
+                                }.getOrDefault(emptyList())
+                                if (lookupResults.isEmpty()) {
+                                    searchError = "Nie znaleziono wynikow dla tego OEM."
+                                }
+                                isSearching = false
+                            }
+                        }
+                    ) {
+                        Text(if (isSearching) "Szukam..." else "Szukaj w sklepie")
+                    }
+                    TextButton(
+                        onClick = {
+                            oemPartNumber = "33326763463"
+                            lookupResults = emptyList()
+                            selectedResult = null
+                            searchError = null
+                        }
+                    ) {
+                        Text("Przyklad")
+                    }
+                }
+                searchError?.let { error ->
+                    EmptyPartsRow(error)
+                }
+                if (lookupResults.isNotEmpty()) {
+                    Text(
+                        text = "Wybierz produkt do listy",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    lookupResults.forEach { lookup ->
+                        LookupResultCard(
+                            title = lookup.manufacturer,
+                            subtitle = lookup.name,
+                            primary = "Cena brutto: ${lookup.shopPrice}",
+                            secondary = "OEM: ${lookup.oemPartNumber} / Producent: ${lookup.manufacturerPartNumber}",
+                            source = lookup.shopUrl,
+                            imageUrl = lookup.imageUrl,
+                            imageSearchUrl = lookup.imageSearchUrl,
+                            isSelected = selectedResult == lookup,
+                            onClick = { selectedResult = lookup }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSave,
+                onClick = {
+                    val lookup = selectedResult ?: return@TextButton
+                    onSave(
+                        ShoppingListItem(
+                            id = nextId,
+                            partNumber = lookup.oemPartNumber,
+                            manufacturerPartNumber = lookup.manufacturerPartNumber,
+                            name = lookup.name,
+                            manufacturer = lookup.manufacturer,
+                            repairTitle = repairTitle.trim(),
+                            area = area,
+                            quantity = quantityValue ?: 1,
+                            source = "czescidobmw.pl",
+                            price = lookup.shopPrice,
+                            imageUri = lookup.imageUrl,
+                            shopUrl = lookup.shopUrl,
+                            realOemUrl = lookup.realOemUrl
+                        )
+                    )
+                }
+            ) {
+                Text("Dodaj do zakupow")
             }
         },
         dismissButton = {

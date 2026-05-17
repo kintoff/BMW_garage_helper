@@ -51,7 +51,15 @@ fun GarageApp() {
     when {
         selectedVehicle != null -> VehicleOverviewScreen(
             vehicle = selectedVehicle,
-            onBack = { selectedVehicle = null }
+            onBack = { selectedVehicle = null },
+            onVehicleUpdated = { updatedVehicle ->
+                val index = vehicles.indexOfFirst { it.stableId() == updatedVehicle.stableId() }
+                if (index >= 0) {
+                    vehicles[index] = updatedVehicle
+                }
+                selectedVehicle = updatedVehicle
+                vehicleStorage.saveVehicles(vehicles)
+            }
         )
 
         isAddingVehicle -> AddVehicleWizard(
@@ -77,6 +85,10 @@ fun GarageApp() {
 }
 
 private fun Vehicle.copyAsDuplicate(): Vehicle = copy(
+    id = "vehicle-${System.currentTimeMillis()}",
     model = "${model.ifBlank { "Auto" }} kopia",
     note = note.ifBlank { "Skopiowany profil auta." }
 )
+
+private fun Vehicle.stableId(): String =
+    id.ifBlank { vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } } }

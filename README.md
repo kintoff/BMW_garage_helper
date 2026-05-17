@@ -5,7 +5,12 @@ Prywatna aplikacja Android do organizowania napraw, diagnostyki, notatek, zdjec,
 ## Aktualny zakres
 
 - profile aut i lista modulow auta,
+- edycja profilu auta z VIN oraz opcjonalnym linkiem katalogu czesci,
 - lista napraw pogrupowana wedlug obszarow auta,
+- lista zakupow przypisana do konkretnej naprawy i obszaru auta,
+- integracja schematow czescidobmw.pl po VIN: grupy, miniatury, obraz schematu i lista OEM,
+- dodawanie wybranych czesci ze schematu bezposrednio do listy zakupow,
+- przyjmowanie pozycji z listy zakupow do magazynu czesci,
 - dokumentacja przypisana do konkretnej naprawy,
 - linki TIS z nazwa i edycja,
 - wiele tabel momentow dokrecen dla jednej naprawy,
@@ -16,6 +21,12 @@ Prywatna aplikacja Android do organizowania napraw, diagnostyki, notatek, zdjec,
 - import i eksport dokumentacji naprawy jako jeden pakiet `.bmwdoc.zip`.
 
 Pakiet eksportu dokumentacji zawiera dane dokumentacji oraz dolaczone pliki, np. schematy, zdjecia, filmy i dokumenty. Dzieki temu dokumentacje jednej naprawy mozna przeniesc na inne urzadzenie lub wyslac innemu uzytkownikowi.
+
+## Schematy i lista zakupow
+
+Profil auta przechowuje VIN. Na jego podstawie aplikacja pobiera katalog pojazdu z `czescidobmw.pl`, pokazuje grupy pasujace do obszaru naprawy, a nastepnie liste schematow z miniaturami. W widoku schematu obraz pozostaje widoczny nad przewijana lista czesci. Obraz mozna powiekszyc, a wybrane pozycje OEM dodac do listy zakupow danej naprawy.
+
+Lista zakupow jest powiazana z naprawa i magazynem. Pozycje mozna edytowac, usuwac, uzupelniac o dane sklepu i oznaczac jako odebrane. Odebrana pozycja przechodzi do magazynu czesci.
 
 Pierwszy profil testowy:
 
