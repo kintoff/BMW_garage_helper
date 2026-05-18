@@ -3,10 +3,16 @@ package pl.garage.bmwassistant.ui.screens
 import androidx.activity.compose.BackHandler
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.text.Html
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,7 +20,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,8 +44,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -44,13 +59,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.garage.bmwassistant.data.sampleRepairsFor
 import pl.garage.bmwassistant.model.PartInventoryItem
+import pl.garage.bmwassistant.model.PersonalDocumentationItem
+import pl.garage.bmwassistant.model.PersonalDocumentationItemType
+import pl.garage.bmwassistant.model.RepairCheckpoint
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
 import pl.garage.bmwassistant.model.ShoppingListItem
+import pl.garage.bmwassistant.model.TorqueDiagramAssignment
+import pl.garage.bmwassistant.model.TorqueSpec
+import pl.garage.bmwassistant.model.TorqueSpecTable
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
+import pl.garage.bmwassistant.ui.components.AccentBlue
+import pl.garage.bmwassistant.ui.components.AccentGreen
+import pl.garage.bmwassistant.ui.components.AccentPurple
+import pl.garage.bmwassistant.ui.components.AccentRed
+import pl.garage.bmwassistant.ui.components.AccentYellow
+import pl.garage.bmwassistant.ui.components.BottomNavBar
+import pl.garage.bmwassistant.ui.components.GaragePanel
+import pl.garage.bmwassistant.ui.components.SegmentTabs
+import pl.garage.bmwassistant.ui.components.StatusBadge
 import pl.garage.bmwassistant.ui.components.iconResource
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +99,7 @@ fun VehicleRepairListScreen(
     inventoryParts: List<PartInventoryItem>,
     initialRepairTitle: String? = null,
     onRepairAdded: (RepairProject, RepairDocumentation) -> Unit,
+    onRepairUpdated: (RepairProject) -> Unit,
     onOpenDocumentation: (RepairDocumentation) -> Unit,
     onOpenShoppingList: (RepairProject) -> Unit,
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
@@ -80,6 +111,7 @@ fun VehicleRepairListScreen(
             repairs.map { it.area }.toSet().ifEmpty { setOf(VehicleArea.Engine) }
         )
     }
+    var selectedFilter by remember { mutableStateOf("Aktywne") }
     var isChoosingRepairArea by remember { mutableStateOf(false) }
     var selectedAreaForNewRepair by remember { mutableStateOf<VehicleArea?>(null) }
     var selectedRepair by remember(initialRepairTitle, repairs) {
@@ -99,11 +131,15 @@ fun VehicleRepairListScreen(
         RepairDetailsScreen(
             vehicle = vehicle,
             repair = repair,
-            documentation = repairDocumentation.firstOrNull { it.repairTitle == repair.title },
-            availableParts = inventoryParts.filter { it.repairTitle == repair.title },
+            documentation = repairDocumentation.firstOrNull { it.belongsToRepair(repair) },
+            availableParts = inventoryParts.filter { it.belongsToRepair(repair) },
             onOpenDocumentation = onOpenDocumentation,
             onOpenShoppingList = onOpenShoppingList,
             onAddShoppingItems = onAddShoppingItems,
+            onRepairUpdated = { updatedRepair ->
+                selectedRepair = updatedRepair
+                onRepairUpdated(updatedRepair)
+            },
             onBack = {
                 selectedRepair = null
                 onInitialRepairClosed()
@@ -136,75 +172,155 @@ fun VehicleRepairListScreen(
         )
     }
 
+    val filteredRepairs = remember(repairs, selectedFilter) {
+        repairs.filter { repair ->
+            when (selectedFilter) {
+                "Zakonczone" -> repair.status.lowercase().contains("zakon")
+                else -> !repair.status.lowercase().contains("zakon")
+            }
+        }
+    }
+    val bottomItems = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej")
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                TextButton(onClick = onBack) {
-                    Text("Wroc do auta")
-                }
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Header(
-                            title = "Lista napraw",
+                            title = "Naprawy",
                             subtitle = vehicle.displayName.ifBlank { "Profil auta" }
                         )
+                        AddRepairButton(onClick = { isChoosingRepairArea = true })
                     }
-                    AddRepairButton(onClick = { isChoosingRepairArea = true })
                 }
-            }
 
-            items(VehicleArea.entries) { area ->
-                val areaRepairs = repairs.filter { it.area == area }
-                RepairAreaSection(
-                    area = area,
-                    repairs = areaRepairs,
-                    isExpanded = area in expandedAreas,
-                    onRepairClick = { repair -> selectedRepair = repair },
-                    onToggle = {
-                        expandedAreas = if (area in expandedAreas) {
-                            expandedAreas - area
-                        } else {
-                            expandedAreas + area
+                item {
+                    SegmentTabs(
+                        tabs = listOf("Aktywne", "Zakonczone"),
+                        selectedTab = selectedFilter,
+                        onSelect = { selectedFilter = it }
+                    )
+                }
+
+                if (filteredRepairs.isEmpty()) {
+                    item {
+                        GaragePanel {
+                            Text(
+                                text = "Brak napraw w tej zakladce.",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                            )
                         }
                     }
+                } else {
+                    items(filteredRepairs) { repair ->
+                        RepairCard(
+                            repair = repair,
+                            documentation = repairDocumentation.firstOrNull { it.belongsToRepair(repair) },
+                            partsCount = inventoryParts.count { it.belongsToRepair(repair) },
+                            onClick = { selectedRepair = repair }
+                        )
+                    }
+                }
+            }
+            BottomNavBar(
+                items = bottomItems,
+                selectedItem = "Naprawy",
+                onSelect = { item ->
+                    if (item != "Naprawy") onBack()
+                },
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RepairCard(
+    repair: RepairProject,
+    documentation: RepairDocumentation?,
+    partsCount: Int,
+    onClick: () -> Unit,
+) {
+    GaragePanel(onClick = onClick) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Surface(
+                modifier = Modifier.size(38.dp),
+                color = repair.area.accentColor().copy(alpha = 0.18f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Image(
+                        painter = painterResource(repair.area.iconResource()),
+                        contentDescription = repair.area.label,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = repair.title,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = repair.area.label,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.66f),
+                    fontSize = 13.sp
                 )
             }
+            StatusBadge(repair.status.normalizedRepairStatus())
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "$partsCount czesci",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                fontSize = 12.sp
+            )
+            Text(
+                text = "${documentation?.torqueSpecs?.size ?: 0} momentow",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                fontSize = 12.sp
+            )
         }
     }
 }
 
 @Composable
 private fun AddRepairButton(onClick: () -> Unit) {
-    Card(
+    Surface(
         modifier = Modifier
-            .height(48.dp)
+            .size(54.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        color = MaterialTheme.colorScheme.primary
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Box(contentAlignment = Alignment.Center) {
             Text(
                 text = "+",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary
             )
         }
@@ -339,6 +455,7 @@ private fun AddRepairDialog(
                         title = "Dokumentacja: $title",
                         area = area,
                         repairTitle = title,
+                        repairId = repair.id,
                         summary = "Dokumentacja powiazana z naprawa: $title. Ten wpis zostaje zapisany rowniez wtedy, gdy naprawa zniknie z aktywnej listy."
                     )
                     onSave(repair, documentation)
@@ -489,9 +606,11 @@ private fun RepairDetailsScreen(
     onOpenDocumentation: (RepairDocumentation) -> Unit,
     onOpenShoppingList: (RepairProject) -> Unit,
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
+    onRepairUpdated: (RepairProject) -> Unit,
     onBack: () -> Unit,
 ) {
     var isCatalogVisible by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableStateOf("Opis") }
 
     if (isCatalogVisible) {
         RealOemSchematicsDialog(
@@ -513,67 +632,931 @@ private fun RepairDetailsScreen(
         ) {
             item {
                 TextButton(onClick = onBack) {
-                    Text("Wroc do listy")
+                    Text("‹ Naprawy")
                 }
             }
             item {
-                Header(
-                    title = repair.title,
-                    subtitle = "${vehicle.displayName.ifBlank { "BMW" }} / ${repair.area.label}"
-                )
+                RepairDetailsHeader(repair)
             }
             item {
+                SegmentTabs(
+                    tabs = listOf("Opis", "Czesci", "Dokumenty", "Momenty", "Notatki"),
+                    selectedTab = selectedTab,
+                    onSelect = { selectedTab = it }
+                )
+            }
+            when (selectedTab) {
+                "Opis" -> item {
+                    RepairOverviewTab(
+                        repair = repair,
+                        onRepairUpdated = onRepairUpdated
+                    )
+                }
+                "Czesci" -> item {
+                    RepairPartsTab(
+                        repair = repair,
+                        availableParts = availableParts,
+                        onOpenShoppingList = { onOpenShoppingList(repair) },
+                        onOpenCatalog = { isCatalogVisible = true }
+                    )
+                }
+                "Dokumenty" -> item {
+                    RepairDocumentsTab(
+                        documentation = documentation,
+                        onOpenDocumentation = onOpenDocumentation
+                    )
+                }
+                "Momenty" -> item { RepairTorqueTab(documentation) }
+                "Notatki" -> item { RepairNotesTab(documentation) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RepairDetailsHeader(repair: RepairProject) {
+    GaragePanel {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 Text(
-                    text = repair.problemDescription,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                    text = repair.title,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = repair.area.label,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
                 )
             }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    RepairDetailTile(
-                        title = "Lista zakupow",
-                        subtitle = "Tu zbierzemy elementy potrzebne do wykonania tej naprawy.",
-                        marker = "${repair.partsToIdentify.size} pozycji",
-                        onClick = { onOpenShoppingList(repair) }
-                    )
-                    RepairDetailTile(
-                        title = "Dostepne czesci",
-                        subtitle = if (availableParts.isEmpty()) {
-                            "Brak czesci przypisanych do tej naprawy."
-                        } else {
-                            availableParts.joinToString { "${it.name} x${it.quantity}" }
-                        },
-                        marker = "${availableParts.size} w magazynie"
-                    )
-                    RepairDetailTile(
-                        title = "Schematy czescidobmw.pl",
-                        subtitle = "Pobierz schematy po VIN z kategorii ${repair.area.label}, wybierz diagram i dodaj OEM-y do listy zakupow.",
-                        marker = "Pobierz",
-                        onClick = { isCatalogVisible = true }
-                    )
-                    RepairDetailTile(
-                        title = "Dokumentacja",
-                        subtitle = documentation?.summary
-                            ?: "Dokumentacja zostanie utworzona automatycznie dla nowej naprawy.",
-                        marker = documentation?.title ?: "Brak wpisu",
-                        onClick = documentation?.let { doc ->
-                            { onOpenDocumentation(doc) }
+            StatusBadge(repair.status.normalizedRepairStatus())
+        }
+    }
+}
+
+@Composable
+private fun RepairOverviewTab(
+    repair: RepairProject,
+    onRepairUpdated: (RepairProject) -> Unit,
+) {
+    var descriptionDraft by remember(repair.id, repair.problemDescription) {
+        mutableStateOf(repair.problemDescription)
+    }
+    var newCheckpointText by remember(repair.id) { mutableStateOf("") }
+    val checkpoints = repair.effectiveCheckpoints()
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        GaragePanel {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Opis problemu", fontWeight = FontWeight.SemiBold)
+                TextButton(
+                    enabled = descriptionDraft.trim() != repair.problemDescription,
+                    onClick = {
+                        onRepairUpdated(
+                            repair.copy(problemDescription = descriptionDraft.trim())
+                        )
+                    }
+                ) {
+                    Text("Zapisz")
+                }
+            }
+            GarageTextField(
+                value = descriptionDraft,
+                onValueChange = { descriptionDraft = it },
+                label = "Opis",
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = "Opisz objawy, kontekst i co trzeba sprawdzic",
+                singleLine = false,
+                minLines = 4
+            )
+        }
+        GaragePanel {
+            Text("Plan dzialania", fontWeight = FontWeight.SemiBold)
+            if (checkpoints.isEmpty()) {
+                Text(
+                    text = "Dodaj pierwszy checkpoint naprawy.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.66f),
+                    fontSize = 13.sp
+                )
+            } else {
+                checkpoints.forEach { checkpoint ->
+                    RepairCheckpointRow(
+                        checkpoint = checkpoint,
+                        onCheckedChange = { isDone ->
+                            val updatedCheckpoints = checkpoints.map { item ->
+                                if (item.id == checkpoint.id) item.copy(isDone = isDone) else item
+                            }
+                            onRepairUpdated(repair.withCheckpoints(updatedCheckpoints))
                         }
                     )
-                    RepairDetailTile(
-                        title = "Notatki",
-                        subtitle = "Szybkie uwagi z pracy, pomiary, obserwacje i decyzje.",
-                        marker = "Do rozbudowy"
-                    )
-                    RepairDetailTile(
-                        title = "Odczyt bledow",
-                        subtitle = "Pozniej podepniemy tutaj odczyt z BimmerTool i przypisanie bledow do kategorii.",
-                        marker = "BimmerTool pozniej"
-                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                GarageTextField(
+                    value = newCheckpointText,
+                    onValueChange = { newCheckpointText = it },
+                    label = "Checkpoint",
+                    modifier = Modifier.weight(1f),
+                    placeholder = "Nowy checkpoint"
+                )
+                TextButton(
+                    enabled = newCheckpointText.isNotBlank(),
+                    onClick = {
+                        val updatedCheckpoints = checkpoints + RepairCheckpoint(
+                            id = "checkpoint-${System.currentTimeMillis()}",
+                            text = newCheckpointText.trim()
+                        )
+                        onRepairUpdated(repair.withCheckpoints(updatedCheckpoints))
+                        newCheckpointText = ""
+                    }
+                ) {
+                    Text("Dodaj")
                 }
             }
         }
     }
+}
+
+@Composable
+private fun RepairCheckpointRow(
+    checkpoint: RepairCheckpoint,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = checkpoint.isDone,
+            onCheckedChange = onCheckedChange
+        )
+        Text(
+            text = checkpoint.text,
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurface.copy(
+                alpha = if (checkpoint.isDone) 0.52f else 0.82f
+            )
+        )
+    }
+}
+
+@Composable
+private fun RepairPartsTab(
+    repair: RepairProject,
+    availableParts: List<PartInventoryItem>,
+    onOpenShoppingList: () -> Unit,
+    onOpenCatalog: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        GaragePanel(onClick = onOpenShoppingList) {
+            Text("Czesci do ustalenia", fontWeight = FontWeight.SemiBold)
+            if (repair.partsToIdentify.isEmpty()) {
+                Text("Brak pozycji na liscie.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f))
+            } else {
+                repair.partsToIdentify.forEach { part ->
+                    Text("• $part", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f))
+                }
+            }
+            StatusBadge("Do kupienia", AccentYellow)
+        }
+        GaragePanel {
+            Text("Na stanie", fontWeight = FontWeight.SemiBold)
+            if (availableParts.isEmpty()) {
+                Text("Brak czesci przypisanych do tej naprawy.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f))
+            } else {
+                availableParts.forEach { part ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(part.name, modifier = Modifier.weight(1f))
+                        Text("${part.quantity} szt.", color = AccentGreen)
+                    }
+                }
+            }
+        }
+        GaragePanel(onClick = onOpenCatalog) {
+            Text("Schematy czescidobmw.pl", fontWeight = FontWeight.SemiBold)
+            Text(
+                text = "Pobierz schematy po VIN i dodaj OEM-y do listy zakupow.",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RepairDocumentsTab(
+    documentation: RepairDocumentation?,
+    onOpenDocumentation: (RepairDocumentation) -> Unit,
+) {
+    val tisLinks = documentation?.tisDocuments.orEmpty()
+    val legacyTisLinks = documentation?.tisLinks.orEmpty()
+    val files = documentation?.personalNotes.orEmpty().filter {
+        it.type == PersonalDocumentationItemType.Document || it.type == PersonalDocumentationItemType.File
+    }
+    val media = documentation?.personalNotes.orEmpty().filter {
+        it.type == PersonalDocumentationItemType.Photo || it.type == PersonalDocumentationItemType.Video
+    }
+    val videos = documentation?.youtubeVideos.orEmpty()
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        DocumentationSectionTitle("Linki TIS")
+        GaragePanel(onClick = documentation?.let { doc -> { onOpenDocumentation(doc) } }) {
+            if (tisLinks.isEmpty() && legacyTisLinks.isEmpty()) {
+                EmptyDocumentationText("Brak linkow TIS.")
+            } else {
+                tisLinks.forEach { link ->
+                    DocumentationLinkRow(
+                        title = link.title,
+                        subtitle = "BMW TIS",
+                        marker = "↗",
+                        accent = AccentBlue
+                    )
+                }
+                legacyTisLinks.forEach { url ->
+                    DocumentationLinkRow(
+                        title = url,
+                        subtitle = "BMW TIS",
+                        marker = "↗",
+                        accent = AccentBlue
+                    )
+                }
+            }
+        }
+
+        DocumentationSectionTitle("Pliki i dokumenty")
+        GaragePanel {
+            if (files.isEmpty()) {
+                EmptyDocumentationText("Brak plikow i dokumentow.")
+            } else {
+                files.forEach { file ->
+                    DocumentationFileRow(file)
+                }
+            }
+        }
+
+        DocumentationSectionTitle("Youtube")
+        GaragePanel {
+            if (videos.isEmpty()) {
+                EmptyDocumentationText("Brak filmow YouTube.")
+            } else {
+                videos.forEach { video ->
+                    DocumentationYoutubeRow(
+                        title = video.title,
+                        subtitle = video.note.ifBlank { "YouTube" }
+                    )
+                }
+            }
+        }
+
+        DocumentationSectionTitle("Zdjecia i filmy")
+        if (media.isEmpty()) {
+            GaragePanel {
+                EmptyDocumentationText("Brak zdjec i filmow.")
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                repeat(4) { index ->
+                    val item = media.getOrNull(index)
+                    if (item == null) {
+                        DocumentationEmptyMediaTile(Modifier.weight(1f))
+                    } else {
+                        DocumentationMediaTile(
+                            item = item,
+                            extraCount = if (index == 3 && media.size > 4) media.size - 3 else 0,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
+        GaragePanel(onClick = documentation?.let { doc -> { onOpenDocumentation(doc) } }) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("+", color = AccentBlue, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = "Dodaj",
+                    color = AccentBlue,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentationSectionTitle(title: String) {
+    Text(
+        text = title,
+        color = MaterialTheme.colorScheme.onBackground,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+@Composable
+private fun EmptyDocumentationText(text: String) {
+    Text(
+        text = text,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+        fontSize = 14.sp
+    )
+}
+
+@Composable
+private fun DocumentationLinkRow(
+    title: String,
+    subtitle: String,
+    marker: String,
+    accent: androidx.compose.ui.graphics.Color,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(32.dp),
+            color = accent.copy(alpha = 0.12f),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text("▱", color = accent, fontWeight = FontWeight.Bold)
+            }
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Text(
+                subtitle,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                fontSize = 12.sp,
+                maxLines = 1
+            )
+        }
+        Text(
+            text = marker,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun DocumentationYoutubeRow(
+    title: String,
+    subtitle: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(108.dp)
+                .height(68.dp)
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF263746), Color(0xFF101922))
+                    ),
+                    RoundedCornerShape(8.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                color = AccentRed.copy(alpha = 0.92f),
+                shape = RoundedCornerShape(6.dp)
+            ) {
+                Text(
+                    text = "▶",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Text(title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Text(
+                subtitle,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                fontSize = 12.sp,
+                maxLines = 1
+            )
+        }
+        Text(
+            text = "↗",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun DocumentationFileRow(file: PersonalDocumentationItem) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(30.dp),
+            color = AccentRed.copy(alpha = 0.18f),
+            shape = RoundedCornerShape(6.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text("PDF", color = AccentRed, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(file.title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(
+                file.text.ifBlank { "Dokument" },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                fontSize = 12.sp,
+                maxLines = 1
+            )
+        }
+        Text("↓", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f), fontSize = 22.sp)
+    }
+}
+
+@Composable
+private fun DocumentationMediaTile(
+    item: PersonalDocumentationItem,
+    extraCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(82.dp)
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFF2B3C46), Color(0xFF0E1821))
+                ),
+                RoundedCornerShape(8.dp)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (extraCount > 0) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.42f), RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "+$extraCount",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else {
+            Text(
+                text = if (item.type == PersonalDocumentationItemType.Video) "FILM" else "IMG",
+                color = AccentBlue,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun DocumentationEmptyMediaTile(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(82.dp)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.52f), RoundedCornerShape(8.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "+",
+            color = AccentBlue.copy(alpha = 0.72f),
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun RepairTorqueTab(documentation: RepairDocumentation?) {
+    var mode by remember { mutableStateOf("Lista") }
+    var selectedTorqueIndex by remember { mutableStateOf(0) }
+    val tables = documentation?.effectiveTorqueTables().orEmpty()
+    val activeTable = tables.firstOrNull()
+    val specs = activeTable?.torqueSpecs.orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SegmentTabs(
+            tabs = listOf("Lista", "Szczegoly"),
+            selectedTab = mode,
+            onSelect = { mode = it }
+        )
+        if (mode == "Lista") {
+            TorqueDiagramListView(
+                table = activeTable,
+                specs = specs,
+                selectedTorqueIndex = selectedTorqueIndex.coerceIn(0, (specs.size - 1).coerceAtLeast(0)),
+                onSelectTorque = { selectedTorqueIndex = it }
+            )
+        } else {
+            TorqueDetailsTable(specs = specs)
+        }
+        GaragePanel {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("+", color = AccentBlue, fontSize = 24.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = if (mode == "Lista") "Zmien schemat" else "Import ze screenshotu lub dodaj recznie",
+                    color = AccentBlue,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TorqueDiagramListView(
+    table: TorqueSpecTable?,
+    specs: List<TorqueSpec>,
+    selectedTorqueIndex: Int,
+    onSelectTorque: (Int) -> Unit,
+) {
+    val assignments = table?.diagramAssignments.orEmpty()
+        .filter { it.torqueSpecIndex in specs.indices }
+        .ifEmpty { defaultTorqueAssignments(specs.size) }
+    val selectedSpec = specs.getOrNull(selectedTorqueIndex)
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        TorqueDiagramPreview(
+            imageUri = table?.diagramImageUri,
+            assignments = assignments,
+            specs = specs,
+            selectedTorqueIndex = selectedTorqueIndex,
+            onSelectTorque = onSelectTorque
+        )
+
+        if (specs.isEmpty()) {
+            GaragePanel {
+                EmptyDocumentationText("Brak zapisanych momentow dla tej naprawy.")
+            }
+        } else {
+            specs.take(4).forEachIndexed { index, spec ->
+                TorquePointRow(
+                    index = index,
+                    spec = spec,
+                    selected = index == selectedTorqueIndex,
+                    onClick = { onSelectTorque(index) }
+                )
+            }
+        }
+
+        GaragePanel {
+            Text("Informacja", fontWeight = FontWeight.SemiBold)
+            Text(
+                text = if (selectedSpec == null) {
+                    "Momenty dokrecania zgodnie z TIS. Zawsze sprawdzaj aktualne dane techniczne."
+                } else {
+                    "${selectedSpec.component}: ${selectedSpec.torque}. ${selectedSpec.notes.ifBlank { "Sprawdz zrodlo przed montazem." }}"
+                },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun TorqueDiagramPreview(
+    imageUri: String?,
+    assignments: List<TorqueDiagramAssignment>,
+    specs: List<TorqueSpec>,
+    selectedTorqueIndex: Int,
+    onSelectTorque: (Int) -> Unit,
+) {
+    val context = LocalContext.current
+    val bitmap = remember(imageUri) {
+        imageUri?.let { loadBitmapFromUri(context, Uri.parse(it)) }
+    }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(260.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+    ) {
+        val diagramWidth = maxWidth
+        val diagramHeight = maxHeight
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Schemat momentow dokrecania",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            TorquePlaceholderDiagram()
+        }
+
+        assignments.forEach { assignment ->
+            val spec = specs.getOrNull(assignment.torqueSpecIndex)
+            val selected = assignment.torqueSpecIndex == selectedTorqueIndex
+            Surface(
+                modifier = Modifier
+                    .offset(
+                        x = (diagramWidth * assignment.xRatio) - 14.dp,
+                        y = (diagramHeight * assignment.yRatio) - 14.dp
+                    )
+                    .size(28.dp)
+                    .clickable { onSelectTorque(assignment.torqueSpecIndex) },
+                color = if (selected) AccentBlue else AccentBlue.copy(alpha = 0.82f),
+                shape = RoundedCornerShape(50)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "${assignment.torqueSpecIndex + 1}",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            if (selected && spec != null) {
+                Text(
+                    text = spec.torque,
+                    modifier = Modifier
+                        .offset(
+                            x = (diagramWidth * assignment.xRatio) + 14.dp,
+                            y = (diagramHeight * assignment.yRatio) - 12.dp
+                        )
+                        .background(Color.Black.copy(alpha = 0.42f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    color = AccentBlue,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TorquePlaceholderDiagram() {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        val lineColor = Color.White.copy(alpha = 0.42f)
+        val thin = 3f
+        val path = Path().apply {
+            moveTo(w * 0.12f, h * 0.62f)
+            cubicTo(w * 0.18f, h * 0.28f, w * 0.42f, h * 0.20f, w * 0.68f, h * 0.28f)
+            cubicTo(w * 0.86f, h * 0.34f, w * 0.90f, h * 0.58f, w * 0.76f, h * 0.72f)
+            cubicTo(w * 0.55f, h * 0.88f, w * 0.24f, h * 0.82f, w * 0.12f, h * 0.62f)
+        }
+        drawPath(path, lineColor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = thin))
+        drawCircle(lineColor, radius = w * 0.13f, center = Offset(w * 0.48f, h * 0.50f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = thin))
+        drawCircle(lineColor, radius = w * 0.08f, center = Offset(w * 0.64f, h * 0.57f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = thin))
+        drawLine(lineColor, Offset(w * 0.22f, h * 0.42f), Offset(w * 0.84f, h * 0.42f), strokeWidth = thin)
+        drawLine(lineColor, Offset(w * 0.20f, h * 0.70f), Offset(w * 0.72f, h * 0.28f), strokeWidth = thin)
+        drawLine(lineColor, Offset(w * 0.35f, h * 0.82f), Offset(w * 0.82f, h * 0.54f), strokeWidth = thin)
+    }
+}
+
+@Composable
+private fun TorquePointRow(
+    index: Int,
+    spec: TorqueSpec,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = if (selected) 1.dp else 0.dp,
+                color = if (selected) AccentBlue else Color.Transparent,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(26.dp),
+                color = AccentBlue.copy(alpha = if (selected) 0.95f else 0.32f),
+                shape = RoundedCornerShape(50)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "${index + 1}",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Text(
+                text = spec.component,
+                modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+            Text(
+                text = spec.torque,
+                color = AccentBlue,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun TorqueDetailsTable(specs: List<TorqueSpec>) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        GaragePanel {
+            Text("Pelna tabela dokrecen", fontWeight = FontWeight.SemiBold)
+            if (specs.isEmpty()) {
+                EmptyDocumentationText("Brak zapisanych momentow.")
+            } else {
+                specs.forEachIndexed { index, spec ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${index + 1}. ${spec.component}",
+                                modifier = Modifier.weight(1f),
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2
+                            )
+                            Text(spec.torque, color = AccentBlue, fontWeight = FontWeight.SemiBold)
+                        }
+                        val details = listOf(
+                            spec.type,
+                            spec.thread,
+                            spec.tighteningSpecifications,
+                            spec.source,
+                            spec.notes
+                        ).filter { it.isNotBlank() }
+                        if (details.isNotEmpty()) {
+                            Text(
+                                text = details.joinToString(" / "),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
+    torqueTables.ifEmpty {
+        if (
+            torqueSpecs.isEmpty() &&
+            torqueDiagramImageUri == null &&
+            torqueDiagramAssignments.isEmpty()
+        ) {
+            emptyList()
+        } else {
+            listOf(
+                TorqueSpecTable(
+                    id = "table-1",
+                    title = "Tabela momentow 1",
+                    torqueSpecs = torqueSpecs,
+                    diagramImageUri = torqueDiagramImageUri,
+                    diagramAssignments = torqueDiagramAssignments
+                )
+            )
+        }
+    }
+
+private fun defaultTorqueAssignments(count: Int): List<TorqueDiagramAssignment> {
+    val positions = listOf(
+        Offset(0.22f, 0.28f),
+        Offset(0.76f, 0.54f),
+        Offset(0.35f, 0.66f),
+        Offset(0.58f, 0.31f),
+        Offset(0.68f, 0.72f),
+        Offset(0.46f, 0.46f)
+    )
+    return positions.take(count).mapIndexed { index, offset ->
+        TorqueDiagramAssignment(
+            torqueSpecIndex = index,
+            xRatio = offset.x,
+            yRatio = offset.y
+        )
+    }
+}
+
+private fun loadBitmapFromUri(context: android.content.Context, uri: Uri): Bitmap? =
+    runCatching {
+        context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+    }.getOrNull()
+
+@Composable
+private fun RepairNotesTab(documentation: RepairDocumentation?) {
+    val notes = documentation?.personalNotes.orEmpty()
+    GaragePanel {
+        Text("Notatki", fontWeight = FontWeight.SemiBold)
+        if (notes.isEmpty()) {
+            Text(
+                text = "Brak notatek przypisanych do tej naprawy.",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+            )
+        } else {
+            notes.forEach { note ->
+                Text(note.title, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+            }
+        }
+    }
+}
+
+private fun String.normalizedRepairStatus(): String = when {
+    lowercase().contains("zakon") -> "Zakonczona"
+    lowercase().contains("plan") -> "Planowana"
+    lowercase().contains("trak") -> "W trakcie"
+    else -> this
+}
+
+private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
+
+private fun PartInventoryItem.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isNullOrBlank() && repairTitle == repair.title)
+
+private fun RepairProject.effectiveCheckpoints(): List<RepairCheckpoint> =
+    checkpoints.ifEmpty {
+        checklist.mapIndexed { index, text ->
+            RepairCheckpoint(
+                id = "checkpoint-${index + 1}",
+                text = text,
+                isDone = false
+            )
+        }
+    }
+
+private fun RepairProject.withCheckpoints(updatedCheckpoints: List<RepairCheckpoint>): RepairProject =
+    copy(
+        checkpoints = updatedCheckpoints,
+        checklist = updatedCheckpoints.map { it.text }
+    )
+
+private fun VehicleArea.accentColor(): androidx.compose.ui.graphics.Color = when (this) {
+    VehicleArea.Engine -> AccentYellow
+    VehicleArea.Body -> AccentGreen
+    VehicleArea.Suspension -> AccentBlue
+    VehicleArea.Electronics -> AccentPurple
+    VehicleArea.Service -> AccentGreen
 }
 
 @Composable
@@ -730,6 +1713,7 @@ private fun RealOemSchematicsDialog(
                     name = translateRealOemLabel(part.name),
                     manufacturer = "BMW / OEM",
                     repairTitle = repair.title,
+                    repairId = repair.id,
                     area = repair.area,
                     quantity = part.quantity.toIntOrNull() ?: 1,
                     source = "czescidobmw.pl",
@@ -1516,6 +2500,7 @@ private fun VehicleRepairListScreenPreview() {
             repairDocumentation = emptyList(),
             inventoryParts = emptyList(),
             onRepairAdded = { _, _ -> },
+            onRepairUpdated = {},
             onOpenDocumentation = {},
             onOpenShoppingList = {},
             onAddShoppingItems = {},

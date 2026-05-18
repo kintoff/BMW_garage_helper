@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -53,7 +54,16 @@ import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.ui.components.Header
+import pl.garage.bmwassistant.ui.components.AccentBlue
+import pl.garage.bmwassistant.ui.components.AccentGreen
+import pl.garage.bmwassistant.ui.components.AccentPurple
+import pl.garage.bmwassistant.ui.components.AccentRed
+import pl.garage.bmwassistant.ui.components.AccentYellow
+import pl.garage.bmwassistant.ui.components.BottomNavBar
+import pl.garage.bmwassistant.ui.components.GaragePanel
+import pl.garage.bmwassistant.ui.components.MetricBlock
 import pl.garage.bmwassistant.ui.components.SectionTitle
+import pl.garage.bmwassistant.ui.components.StatusBadge
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 
 @Composable
@@ -149,6 +159,13 @@ fun VehicleOverviewScreen(
                 updateRepairs(repairProjects + repair)
                 updateRepairDocumentation(repairDocumentation + documentation)
             },
+            onRepairUpdated = { updatedRepair ->
+                updateRepairs(
+                    repairProjects.map { repair ->
+                        if (repair.id == updatedRepair.id) updatedRepair else repair
+                    }
+                )
+            },
             onOpenDocumentation = { documentation ->
                 initialDocumentationRepairTitle = documentation.repairTitle
                 initialRepairListRepairTitle = documentation.repairTitle
@@ -185,8 +202,12 @@ fun VehicleOverviewScreen(
             onDocumentationUpdated = { updatedDocumentation ->
                 updateRepairDocumentation(
                     repairDocumentation.map { documentation ->
-                        if (documentation.repairTitle == updatedDocumentation.repairTitle &&
-                            documentation.area == updatedDocumentation.area
+                        if (documentation.repairId == updatedDocumentation.repairId ||
+                            (
+                                documentation.repairId.isBlank() &&
+                                    documentation.repairTitle == updatedDocumentation.repairTitle &&
+                                    documentation.area == updatedDocumentation.area
+                                )
                         ) {
                             updatedDocumentation
                         } else {
@@ -250,89 +271,258 @@ fun VehicleOverviewScreen(
         )
     }
 
+    val storedShoppingList = if (partStorage.hasShoppingList(currentVehicle)) {
+        partStorage.loadShoppingList(currentVehicle)
+    } else {
+        sampleShoppingListFor(currentVehicle)
+    }
+    val activeRepairs = repairProjects.filterNot { it.status.isFinishedStatus() }
+    val partsToBuy = storedShoppingList.take(3)
+    val bottomItems = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej")
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            item {
-                TextButton(onClick = onBack) {
-                    Text("Wroc do garazu")
-                }
-            }
-
-            item {
-                Header(
-                    title = currentVehicle.displayName.ifBlank { "BMW" },
-                    subtitle = currentVehicle.technicalSummary.ifBlank { "Profil auta" }
-                )
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Image(
-                            painter = painterResource(R.drawable.car_bmw_e61),
-                            contentDescription = currentVehicle.displayName.ifBlank { "BMW" },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(92.dp),
-                            contentScale = ContentScale.Fit
-                        )
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                        TextButton(onClick = onBack) {
+                            Text("‹ Garaz")
+                        }
+                        TextButton(onClick = { isEditingVehicle = true }) {
+                            Text("Edytuj")
+                        }
+                    }
+                }
+
+                item {
+                    CarDashboardHeader(
+                        vehicle = currentVehicle,
+                        activeRepairs = activeRepairs.size,
+                        partsToBuy = storedShoppingList.size
+                    )
+                }
+
+                item { SectionTitle("Aktywne naprawy") }
+                item {
+                    GaragePanel {
+                        if (activeRepairs.isEmpty()) {
                             Text(
-                                text = "Profil auta",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold
+                                text = "Brak aktywnych napraw.",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
                             )
-                            Text(
-                                text = "VIN: ${currentVehicle.vin.ifBlank { "do uzupelnienia" }}",
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
-                                maxLines = 1
-                            )
-                            Text(
-                                text = currentVehicle.note.ifBlank { "Brak notatki startowej." },
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
-                                maxLines = 3
-                            )
-                            TextButton(onClick = { isEditingVehicle = true }) {
-                                Text("Edytuj profil")
+                        } else {
+                            activeRepairs.take(3).forEach { repair ->
+                                DashboardRepairRow(
+                                    repair = repair,
+                                    onClick = {
+                                        initialRepairListRepairTitle = repair.title
+                                        selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                                    }
+                                )
+                            }
+                            TextButton(
+                                onClick = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs } }
+                            ) {
+                                Text("Zobacz wszystkie")
                             }
                         }
                     }
                 }
-            }
 
-            item {
-                SectionTitle("Moduly auta")
-            }
+                item { SectionTitle("Do kupienia") }
+                item {
+                    GaragePanel {
+                        if (partsToBuy.isEmpty()) {
+                            Text(
+                                text = "Lista zakupow jest pusta.",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                            )
+                        } else {
+                            partsToBuy.forEach { item ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = item.name,
+                                        modifier = Modifier.weight(1f),
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "${item.quantity} szt.",
+                                        color = AccentYellow,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
-            item {
-                VehicleModuleGrid(
-                    modules = vehicleModules,
-                    onOpenModule = { selectedModule = it }
+                item { SectionTitle("Szybkie akcje") }
+                item {
+                    QuickActionsGrid(
+                        onOpenRepairs = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs } },
+                        onOpenParts = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.PartsStorage } },
+                        onOpenDocs = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation } }
+                    )
+                }
+            }
+            BottomNavBar(
+                items = bottomItems,
+                selectedItem = "Przeglad",
+                onSelect = { item ->
+                    selectedModule = when (item) {
+                        "Naprawy" -> vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                        "Czesci" -> vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
+                        "Dokumenty" -> vehicleModules.first { it.type == VehicleModuleType.Documentation }
+                        "Wiecej" -> vehicleModules.first { it.type == VehicleModuleType.Status }
+                        else -> null
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
+    }
+}
+
+@Composable
+private fun CarDashboardHeader(
+    vehicle: Vehicle,
+    activeRepairs: Int,
+    partsToBuy: Int,
+) {
+    GaragePanel {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text = vehicle.displayName.ifBlank { "BMW" },
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = vehicle.technicalSummary.ifBlank { "Profil auta" },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+            )
+        }
+        Image(
+            painter = painterResource(R.drawable.car_bmw_e61),
+            contentDescription = vehicle.displayName.ifBlank { "BMW" },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(128.dp),
+            contentScale = ContentScale.Fit
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            MetricBlock("$activeRepairs", "Aktywne\nnaprawy", AccentYellow, Modifier.weight(1f))
+            MetricBlock("$partsToBuy", "Czesci do\nkupienia", AccentBlue, Modifier.weight(1f))
+            MetricBlock("1", "Problem do\nsprawdzenia", AccentRed, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun DashboardRepairRow(
+    repair: RepairProject,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(28.dp),
+            color = repair.areaColor().copy(alpha = 0.16f),
+            shape = RoundedCornerShape(8.dp)
+        ) {}
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(repair.title, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = repair.area.label,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                fontSize = 12.sp
+            )
+        }
+        StatusBadge(repair.status.normalizedStatusLabel())
+        Text("›", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 22.sp)
+    }
+}
+
+@Composable
+private fun QuickActionsGrid(
+    onOpenRepairs: () -> Unit,
+    onOpenParts: () -> Unit,
+    onOpenDocs: () -> Unit,
+) {
+    val actions = listOf(
+        Triple("Dodaj\nnaprawe", AccentYellow, onOpenRepairs),
+        Triple("Dodaj\nczesc", AccentBlue, onOpenParts),
+        Triple("Dodaj\nnotatke", AccentGreen, onOpenDocs),
+        Triple("Dodaj\nzdjecie", AccentPurple, onOpenDocs)
+    )
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(84.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        userScrollEnabled = false
+    ) {
+        items(actions) { action ->
+            GaragePanel(onClick = action.third) {
+                Text(
+                    text = "+",
+                    color = action.second,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = action.first,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                    fontSize = 11.sp,
+                    lineHeight = 13.sp
                 )
             }
         }
     }
+}
+
+private fun RepairProject.areaColor(): Color = when (area) {
+    VehicleArea.Engine -> AccentYellow
+    VehicleArea.Suspension -> AccentBlue
+    VehicleArea.Electronics -> AccentPurple
+    VehicleArea.Body -> AccentGreen
+    VehicleArea.Service -> AccentGreen
+}
+
+private fun String.isFinishedStatus(): Boolean = lowercase().contains("zakon")
+
+private fun String.normalizedStatusLabel(): String = when {
+    lowercase().contains("zakon") -> "Zakonczona"
+    lowercase().contains("plan") -> "Planowana"
+    lowercase().contains("trak") -> "W trakcie"
+    else -> this
 }
 
 private data class VehicleModule(

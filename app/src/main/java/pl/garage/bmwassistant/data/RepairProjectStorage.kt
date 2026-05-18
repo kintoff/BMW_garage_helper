@@ -3,6 +3,7 @@ package pl.garage.bmwassistant.data
 import android.content.Context
 import pl.garage.bmwassistant.model.PersonalDocumentationItem
 import pl.garage.bmwassistant.model.PersonalDocumentationItemType
+import pl.garage.bmwassistant.model.RepairCheckpoint
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
 import pl.garage.bmwassistant.model.TisDocumentationLink
@@ -12,6 +13,7 @@ import pl.garage.bmwassistant.model.TorqueSpecTable
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.model.YoutubeVideo
+import pl.garage.bmwassistant.model.stableRepairId
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -29,10 +31,12 @@ class RepairProjectStorage(context: Context) {
             .apply()
     }
 
-    fun loadDocumentation(vehicle: Vehicle): List<RepairDocumentation> =
-        preferences.getString(documentationKey(vehicle), null)
-            ?.let(::documentationFromJson)
+    fun loadDocumentation(vehicle: Vehicle): List<RepairDocumentation> {
+        val repairs = loadRepairs(vehicle)
+        return preferences.getString(documentationKey(vehicle), null)
+            ?.let { documentationFromJson(it, repairs) }
             .orEmpty()
+    }
 
     fun saveDocumentation(vehicle: Vehicle, documentation: List<RepairDocumentation>) {
         preferences.edit()
@@ -51,6 +55,7 @@ private fun repairsToJson(repairs: List<RepairProject>): JSONArray =
             put(
                 JSONObject()
                     .put("title", repair.title)
+                    .put("id", repair.id)
                     .put("area", repair.area.name)
                     .put("vehicleName", repair.vehicleName)
                     .put("status", repair.status)
@@ -58,6 +63,7 @@ private fun repairsToJson(repairs: List<RepairProject>): JSONArray =
                     .put("problemDescription", repair.problemDescription)
                     .put("goal", repair.goal)
                     .put("checklist", JSONArray(repair.checklist))
+                    .put("checkpoints", checkpointsToJson(repair.checkpoints))
                     .put("partsToIdentify", JSONArray(repair.partsToIdentify))
                     .put("documentsToCollect", JSONArray(repair.documentsToCollect))
             )
@@ -73,6 +79,14 @@ private fun repairsFromJson(rawJson: String): List<RepairProject> =
                 add(
                     RepairProject(
                         title = item.optString("title"),
+                        id = item.optString("id").ifBlank {
+                            stableRepairId(
+                                title = item.optString("title"),
+                                area = runCatching { VehicleArea.valueOf(item.optString("area")) }
+                                    .getOrDefault(VehicleArea.Engine),
+                                vehicleName = item.optString("vehicleName")
+                            )
+                        },
                         area = runCatching { VehicleArea.valueOf(item.optString("area")) }
                             .getOrDefault(VehicleArea.Engine),
                         vehicleName = item.optString("vehicleName"),
@@ -81,6 +95,16 @@ private fun repairsFromJson(rawJson: String): List<RepairProject> =
                         problemDescription = item.optString("problemDescription"),
                         goal = item.optString("goal"),
                         checklist = item.optJSONArray("checklist").toStringList(),
+                        checkpoints = item.optJSONArray("checkpoints").toRepairCheckpoints()
+                            .ifEmpty {
+                                item.optJSONArray("checklist").toStringList().mapIndexed { checkpointIndex, text ->
+                                    RepairCheckpoint(
+                                        id = "checkpoint-${checkpointIndex + 1}",
+                                        text = text,
+                                        isDone = false
+                                    )
+                                }
+                            },
                         partsToIdentify = item.optJSONArray("partsToIdentify").toStringList(),
                         documentsToCollect = item.optJSONArray("documentsToCollect").toStringList()
                     )
@@ -89,12 +113,43 @@ private fun repairsFromJson(rawJson: String): List<RepairProject> =
         }
     }.getOrDefault(emptyList())
 
+private fun checkpointsToJson(checkpoints: List<RepairCheckpoint>): JSONArray =
+    JSONArray().apply {
+        checkpoints.forEach { checkpoint ->
+            put(
+                JSONObject()
+                    .put("id", checkpoint.id)
+                    .put("text", checkpoint.text)
+                    .put("isDone", checkpoint.isDone)
+            )
+        }
+    }
+
+private fun JSONArray?.toRepairCheckpoints(): List<RepairCheckpoint> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            val text = item.optString("text")
+            if (text.isBlank()) continue
+            add(
+                RepairCheckpoint(
+                    id = item.optString("id").ifBlank { "checkpoint-${index + 1}" },
+                    text = text,
+                    isDone = item.optBoolean("isDone", false)
+                )
+            )
+        }
+    }
+}
+
 private fun documentationToJson(documentation: List<RepairDocumentation>): JSONArray =
     JSONArray().apply {
         documentation.forEach { item ->
             put(
                 JSONObject()
                     .put("title", item.title)
+                    .put("repairId", item.repairId)
                     .put("area", item.area.name)
                     .put("repairTitle", item.repairTitle)
                     .put("summary", item.summary)
@@ -111,18 +166,32 @@ private fun documentationToJson(documentation: List<RepairDocumentation>): JSONA
         }
     }
 
-private fun documentationFromJson(rawJson: String): List<RepairDocumentation> =
+private fun documentationFromJson(
+    rawJson: String,
+    repairs: List<RepairProject>,
+): List<RepairDocumentation> =
     runCatching {
         val array = JSONArray(rawJson)
         buildList {
             for (index in 0 until array.length()) {
                 val item = array.getJSONObject(index)
+                val area = runCatching { VehicleArea.valueOf(item.optString("area")) }
+                    .getOrDefault(VehicleArea.Engine)
+                val repairTitle = item.optString("repairTitle")
+                val migratedRepairId = item.optString("repairId").ifBlank {
+                    repairs.firstOrNull { repair ->
+                        repair.title == repairTitle && repair.area == area
+                    }?.id ?: stableRepairId(
+                        title = repairTitle,
+                        area = area,
+                        vehicleName = repairs.firstOrNull { it.title == repairTitle }?.vehicleName.orEmpty()
+                    )
+                }
                 add(
                     RepairDocumentation(
                         title = item.optString("title"),
-                        area = runCatching { VehicleArea.valueOf(item.optString("area")) }
-                            .getOrDefault(VehicleArea.Engine),
-                        repairTitle = item.optString("repairTitle"),
+                        area = area,
+                        repairTitle = repairTitle,
                         summary = item.optString("summary"),
                         tisLinks = item.optJSONArray("tisLinks").toStringList(),
                         tisDocuments = item.optJSONArray("tisDocuments").toTisDocuments(),
@@ -133,7 +202,8 @@ private fun documentationFromJson(rawJson: String): List<RepairDocumentation> =
                         torqueTables = item.optJSONArray("torqueTables").toTorqueTables(),
                         youtubeLinks = item.optJSONArray("youtubeLinks").toStringList(),
                         youtubeVideos = item.optJSONArray("youtubeVideos").toYoutubeVideos(),
-                        personalNotes = item.optJSONArray("personalNotes").toPersonalNotes()
+                        personalNotes = item.optJSONArray("personalNotes").toPersonalNotes(),
+                        repairId = migratedRepairId
                     )
                 )
             }
@@ -194,8 +264,8 @@ private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
                     diagramAssignments = torqueDiagramAssignments
                 )
             )
+        }
     }
-}
 
 private fun RepairDocumentation.effectiveTisDocuments(): List<TisDocumentationLink> =
     tisDocuments.ifEmpty {

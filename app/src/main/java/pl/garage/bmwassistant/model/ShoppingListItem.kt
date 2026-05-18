@@ -7,6 +7,7 @@ data class ShoppingListItem(
     val name: String,
     val manufacturer: String = "",
     val repairTitle: String,
+    val repairId: String = "",
     val area: VehicleArea = VehicleArea.Service,
     val quantity: Int,
     val source: String,

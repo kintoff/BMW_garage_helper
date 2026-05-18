@@ -2,6 +2,8 @@ package pl.garage.bmwassistant.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,10 +16,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -33,7 +38,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -41,9 +56,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.garage.bmwassistant.R
 import pl.garage.bmwassistant.model.Vehicle
-import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.SectionTitle
 import pl.garage.bmwassistant.ui.components.StatusPill
+import pl.garage.bmwassistant.ui.components.AccentBlue
+import pl.garage.bmwassistant.ui.components.AccentGreen
+import pl.garage.bmwassistant.ui.components.AccentPurple
+import pl.garage.bmwassistant.ui.components.AccentYellow
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 
 @Composable
@@ -75,38 +93,384 @@ fun GarageDashboard(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0xFF10283A), Color(0xFF06111A), Color(0xFF03090E)),
+                        center = Offset(140f, 180f),
+                        radius = 900f
+                    )
+                )
         ) {
-            item {
-                Header(
-                    title = "Moj garaz",
-                    subtitle = "Wybierz auto, a potem wejdziesz w jego naprawy, czesci, zdjecia i notatki."
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 26.dp, top = 42.dp, end = 26.dp, bottom = 112.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Mój garaż",
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Surface(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clickable(onClick = onAddVehicle),
+                            shape = CircleShape,
+                            color = Color(0xFF1B2A38)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "+",
+                                    fontSize = 30.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    SectionTitle("Moje auta")
+                }
+
+                if (vehicles.isEmpty()) {
+                    item { AddVehicleWideCard(onClick = onAddVehicle) }
+                } else {
+                    items(vehicles.take(1)) { vehicle ->
+                        GarageVehicleCard(
+                            vehicle = vehicle,
+                            onOpen = { onOpenVehicle(vehicle) },
+                            onLongPress = { vehicleWithOpenOptions = vehicle }
+                        )
+                    }
+                    item { AddVehicleWideCard(onClick = onAddVehicle) }
+                }
+
+                item { SectionTitle("Szybki dostęp") }
+                item { QuickAccessGrid() }
+            }
+            GarageHomeBottomNav(
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GarageVehicleCard(
+    vehicle: Vehicle,
+    onOpen: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onOpen, onLongClick = onLongPress),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF13232F).copy(alpha = 0.92f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource(vehicleIconFor(vehicle)),
+                    contentDescription = vehicle.displayName.ifBlank { "BMW" },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(118.dp),
+                    contentScale = ContentScale.Fit
+                )
+                Text(
+                    text = "›",
+                    fontSize = 38.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
                 )
             }
+            Text(
+                text = vehicle.displayName.ifBlank { "BMW E61 520d" },
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = vehicle.technicalSummary.ifBlank { "M47N2 2.0d  •  2006  •  285 000 km" },
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+            )
+        }
+    }
+}
 
-            item {
+@Composable
+private fun AddVehicleWideCard(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(70.dp)
+            .drawBehind {
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.28f),
+                    cornerRadius = CornerRadius(8.dp.toPx()),
+                    style = Stroke(
+                        width = 1.3.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+                    )
+                )
+            }
+            .clickable(onClick = onClick),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "+  Dodaj auto",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickAccessGrid() {
+    val items = listOf(
+        QuickAccessItem("Naprawy", "3 aktywne", AccentYellow, GarageHomeIcon.Wrench),
+        QuickAccessItem("Części", "2 do kupienia", AccentGreen, GarageHomeIcon.Box),
+        QuickAccessItem("Dokumenty", "12 plików", AccentPurple, GarageHomeIcon.Document),
+        QuickAccessItem("Notatki", "5 notatek", AccentBlue, GarageHomeIcon.Note)
+    )
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(182.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        userScrollEnabled = false
+    ) {
+        gridItems(items) { item ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF13232F).copy(alpha = 0.92f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    SectionTitle("Moje auta")
-                    TextButton(onClick = onAddVehicle) {
-                        Text("Dodaj")
+                    GarageLineIcon(
+                        icon = item.icon,
+                        color = item.color,
+                        modifier = Modifier.size(34.dp)
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = item.title,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = item.subtitle,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
                     }
                 }
             }
+        }
+    }
+}
 
-            item {
-                VehicleTileGrid(
-                    vehicles = vehicles,
-                    onAddVehicle = onAddVehicle,
-                    onOpenVehicle = onOpenVehicle,
-                    onShowVehicleOptions = { vehicleWithOpenOptions = it }
+@Composable
+private fun GarageHomeBottomNav(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color(0xFF07111A).copy(alpha = 0.96f))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val items = listOf(
+            QuickAccessItem("Garaż", "", AccentBlue, GarageHomeIcon.Garage),
+            QuickAccessItem("Naprawy", "", Color.White.copy(alpha = 0.55f), GarageHomeIcon.Wrench),
+            QuickAccessItem("Części", "", Color.White.copy(alpha = 0.55f), GarageHomeIcon.Box),
+            QuickAccessItem("Dokumenty", "", Color.White.copy(alpha = 0.55f), GarageHomeIcon.Document),
+            QuickAccessItem("Profil", "", Color.White.copy(alpha = 0.55f), GarageHomeIcon.Profile)
+        )
+        items.forEach { item ->
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                GarageLineIcon(
+                    icon = item.icon,
+                    color = item.color,
+                    modifier = Modifier.size(23.dp)
                 )
+                Text(
+                    text = item.title,
+                    color = item.color,
+                    fontSize = 11.sp,
+                    fontWeight = if (item.title == "Garaż") FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+private data class QuickAccessItem(
+    val title: String,
+    val subtitle: String,
+    val color: Color,
+    val icon: GarageHomeIcon,
+)
+
+private enum class GarageHomeIcon {
+    Garage,
+    Wrench,
+    Box,
+    Document,
+    Note,
+    Profile
+}
+
+@Composable
+private fun GarageLineIcon(
+    icon: GarageHomeIcon,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = w * 0.075f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        when (icon) {
+            GarageHomeIcon.Wrench -> {
+                drawLine(color, Offset(w * 0.23f, h * 0.78f), Offset(w * 0.62f, h * 0.39f), strokeWidth = w * 0.12f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.2f, h * 0.84f), Offset(w * 0.32f, h * 0.72f), strokeWidth = w * 0.12f, cap = StrokeCap.Round)
+                val jaw = Path().apply {
+                    moveTo(w * 0.64f, h * 0.37f)
+                    cubicTo(w * 0.58f, h * 0.21f, w * 0.7f, h * 0.08f, w * 0.86f, h * 0.14f)
+                    lineTo(w * 0.74f, h * 0.27f)
+                    lineTo(w * 0.82f, h * 0.36f)
+                    lineTo(w * 0.95f, h * 0.25f)
+                    cubicTo(w * 0.98f, h * 0.42f, w * 0.84f, h * 0.54f, w * 0.68f, h * 0.48f)
+                }
+                drawPath(jaw, color, style = stroke)
+            }
+            GarageHomeIcon.Box -> {
+                val top = Path().apply {
+                    moveTo(w * 0.5f, h * 0.1f)
+                    lineTo(w * 0.86f, h * 0.3f)
+                    lineTo(w * 0.5f, h * 0.5f)
+                    lineTo(w * 0.14f, h * 0.3f)
+                    close()
+                }
+                val left = Path().apply {
+                    moveTo(w * 0.14f, h * 0.3f)
+                    lineTo(w * 0.5f, h * 0.5f)
+                    lineTo(w * 0.5f, h * 0.88f)
+                    lineTo(w * 0.14f, h * 0.68f)
+                    close()
+                }
+                val right = Path().apply {
+                    moveTo(w * 0.86f, h * 0.3f)
+                    lineTo(w * 0.5f, h * 0.5f)
+                    lineTo(w * 0.5f, h * 0.88f)
+                    lineTo(w * 0.86f, h * 0.68f)
+                    close()
+                }
+                drawPath(top, color, style = stroke)
+                drawPath(left, color, style = stroke)
+                drawPath(right, color, style = stroke)
+            }
+            GarageHomeIcon.Document -> {
+                val page = Path().apply {
+                    moveTo(w * 0.23f, h * 0.1f)
+                    lineTo(w * 0.62f, h * 0.1f)
+                    lineTo(w * 0.78f, h * 0.27f)
+                    lineTo(w * 0.78f, h * 0.88f)
+                    lineTo(w * 0.23f, h * 0.88f)
+                    close()
+                }
+                drawPath(page, color, style = stroke)
+                drawLine(color, Offset(w * 0.62f, h * 0.1f), Offset(w * 0.62f, h * 0.28f), strokeWidth = w * 0.075f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.62f, h * 0.28f), Offset(w * 0.78f, h * 0.28f), strokeWidth = w * 0.075f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.36f, h * 0.44f), Offset(w * 0.62f, h * 0.44f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.36f, h * 0.59f), Offset(w * 0.62f, h * 0.59f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.36f, h * 0.74f), Offset(w * 0.54f, h * 0.74f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+            }
+            GarageHomeIcon.Note -> {
+                val note = Path().apply {
+                    moveTo(w * 0.16f, h * 0.14f)
+                    lineTo(w * 0.8f, h * 0.14f)
+                    lineTo(w * 0.8f, h * 0.64f)
+                    lineTo(w * 0.62f, h * 0.82f)
+                    lineTo(w * 0.16f, h * 0.82f)
+                    close()
+                }
+                drawPath(note, color, style = stroke)
+                drawLine(color, Offset(w * 0.3f, h * 0.36f), Offset(w * 0.66f, h * 0.36f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.3f, h * 0.53f), Offset(w * 0.6f, h * 0.53f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.62f, h * 0.82f), Offset(w * 0.62f, h * 0.64f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.62f, h * 0.64f), Offset(w * 0.8f, h * 0.64f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+            }
+            GarageHomeIcon.Garage -> {
+                val roof = Path().apply {
+                    moveTo(w * 0.14f, h * 0.43f)
+                    lineTo(w * 0.5f, h * 0.16f)
+                    lineTo(w * 0.86f, h * 0.43f)
+                }
+                drawPath(roof, color, style = stroke)
+                drawRoundRect(color, topLeft = Offset(w * 0.22f, h * 0.43f), size = androidx.compose.ui.geometry.Size(w * 0.56f, h * 0.4f), cornerRadius = CornerRadius(w * 0.04f), style = stroke)
+                drawRoundRect(color, topLeft = Offset(w * 0.34f, h * 0.58f), size = androidx.compose.ui.geometry.Size(w * 0.32f, h * 0.18f), cornerRadius = CornerRadius(w * 0.04f), style = Stroke(width = w * 0.055f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawCircle(color, radius = w * 0.035f, center = Offset(w * 0.41f, h * 0.76f))
+                drawCircle(color, radius = w * 0.035f, center = Offset(w * 0.59f, h * 0.76f))
+            }
+            GarageHomeIcon.Profile -> {
+                drawCircle(color, radius = w * 0.14f, center = Offset(w * 0.5f, h * 0.28f), style = stroke)
+                val body = Path().apply {
+                    moveTo(w * 0.25f, h * 0.86f)
+                    cubicTo(w * 0.25f, h * 0.61f, w * 0.75f, h * 0.61f, w * 0.75f, h * 0.86f)
+                }
+                drawPath(body, color, style = stroke)
             }
         }
     }
@@ -189,7 +553,7 @@ private fun VehicleTileGrid(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         userScrollEnabled = false
     ) {
-        items(vehicles) { vehicle ->
+        gridItems(vehicles) { vehicle ->
             VehicleTile(
                 vehicle = vehicle,
                 onOpen = { onOpenVehicle(vehicle) },

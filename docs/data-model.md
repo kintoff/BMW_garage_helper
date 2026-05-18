@@ -96,9 +96,11 @@ Pola:
 id
 vehicleId
 title
+area
 problemDescription
 status
 priority
+checkpoints
 mileage
 startedAt
 finishedAt
@@ -130,6 +132,13 @@ Przyklad:
   "problemDescription": "Sruba w tylnej zwrotnicy jest mocno skorodowana. Trzeba ustalic numer czesci i metode demontazu.",
   "status": "planned",
   "priority": "high",
+  "checkpoints": [
+    {
+      "id": "checkpoint-1",
+      "text": "Sprawdzic dokumentacje naprawy",
+      "isDone": false
+    }
+  ],
   "mileage": 285000
 }
 ```
@@ -142,6 +151,31 @@ Relacje:
 - naprawa moze miec wiele pozycji listy zakupow,
 - naprawa moze miec wiele zadan,
 - naprawa moze miec jedna glowna dokumentacje naprawy z linkami, schematami, momentami dokrecen, filmami i notatkami.
+- `id` jest stabilnym identyfikatorem naprawy i jest glownym kluczem laczacym dokumentacje, czesci i liste zakupow.
+- `title` jest tylko tekstem wyswietlanym uzytkownikowi. Zmiana tytulu nie powinna rozpinac dokumentacji ani czesci.
+- `problemDescription` jest edytowalnym opisem problemu w zakladce `Opis`.
+- `goal` zostaje obecnie w modelu jako pole legacy, ale nie jest juz pokazywane w nowym widoku `Naprawy -> Opis`.
+- `checklist` zostaje jako pole legacy dla starszych danych.
+- `checkpoints` to aktualny model planu dzialania. Kazdy checkpoint ma wlasne `id`, tekst i stan odhaczenia.
+
+## RepairCheckpoint
+
+Pojedynczy punkt planu dzialania w naprawie.
+
+Pola:
+
+```text
+id
+text
+isDone
+```
+
+Uwagi:
+
+- checkpointy sa zapisywane razem z `RepairProject`,
+- uzytkownik moze odhaczac checkpointy w zakladce `Opis`,
+- uzytkownik moze dodawac nowe checkpointy z poziomu zakladki `Opis`,
+- przy migracji starszych danych aplikacja tworzy checkpointy z dawnego pola `checklist`.
 
 ## ShoppingListItem
 
@@ -155,6 +189,7 @@ partNumber
 manufacturerPartNumber
 name
 manufacturer
+repairId
 repairTitle
 area
 quantity
@@ -167,7 +202,8 @@ realOemUrl
 
 Uwagi:
 
-- `repairTitle` laczy pozycje z konkretna naprawa.
+- `repairId` laczy pozycje z konkretna naprawa.
+- `repairTitle` zostaje jako czytelna etykieta i pole legacy dla starszego zapisu.
 - `area` pozwala grupowac liste zakupow wedlug obszaru auta, np. silnik, nadwozie, zawieszenie.
 - `source` wskazuje pochodzenie pozycji, np. recznie, `czescidobmw.pl`.
 - `shopUrl` prowadzi do strony sklepu lub schematu.
@@ -183,6 +219,7 @@ Przyklad:
   "manufacturerPartNumber": "13537805725",
   "name": "Zbiornik wysokiego cisnienia",
   "manufacturer": "BMW / OEM",
+  "repairId": "repair_bmw_e61_520d_engine_wymiana_swiec_zarowych",
   "repairTitle": "Naprawa ukladu paliwowego",
   "area": "Engine",
   "quantity": 1,
@@ -216,6 +253,7 @@ Pola:
 ```text
 title
 area
+repairId
 repairTitle
 summary
 tisLinks
@@ -231,11 +269,14 @@ personalNotes
 
 Uwagi:
 
+- `repairId` jest glownym powiazaniem dokumentacji z naprawa.
+- `repairTitle` zostaje jako etykieta i pole legacy dla starych danych.
 - `tisLinks`, `torqueSpecs`, `torqueDiagramImageUri`, `torqueDiagramAssignments` i `youtubeLinks` sa polami legacy utrzymywanymi dla zgodnosci ze starszym zapisem.
 - Nowy zapis uzywa `tisDocuments`, `torqueTables`, `youtubeVideos` i `personalNotes`.
 - Jedna dokumentacja naprawy moze zawierac wiele tabel momentow dokrecen.
 - Kazda tabela momentow moze miec wlasny schemat i wlasne przypisania punktow.
 - Dokumentacja moze byc eksportowana i importowana jako jeden pakiet `.bmwdoc.zip`.
+- Dokumentacja nie jest usuwana po zakonczeniu naprawy. Po zamknieciu naprawy pozostaje jako archiwum wiedzy i bedzie pokazywana w osobnym widoku historii/dokumentacji.
 
 Przyklad:
 
@@ -243,6 +284,7 @@ Przyklad:
 {
   "title": "Dokumentacja - swiece zarowe",
   "area": "Engine",
+  "repairId": "repair_bmw_e61_520d_engine_wymiana_swiec_zarowych",
   "repairTitle": "Wymiana swiec zarowych",
   "summary": "Materialy potrzebne do naprawy ukladu swiec zarowych.",
   "tisDocuments": [

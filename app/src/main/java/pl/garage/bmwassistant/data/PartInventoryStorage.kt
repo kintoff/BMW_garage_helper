@@ -7,6 +7,7 @@ import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
+import pl.garage.bmwassistant.model.stableRepairId
 
 class PartInventoryStorage(context: Context) {
     private val preferences = context.getSharedPreferences("garage_parts_data", Context.MODE_PRIVATE)
@@ -16,7 +17,7 @@ class PartInventoryStorage(context: Context) {
         return runCatching {
             val array = JSONArray(rawParts)
             List(array.length()) { index ->
-                array.getJSONObject(index).toPartInventoryItem()
+                array.getJSONObject(index).toPartInventoryItem(vehicle)
             }
         }.getOrDefault(emptyList())
     }
@@ -39,7 +40,7 @@ class PartInventoryStorage(context: Context) {
         return runCatching {
             val array = JSONArray(rawItems)
             List(array.length()) { index ->
-                array.getJSONObject(index).toShoppingListItem()
+                array.getJSONObject(index).toShoppingListItem(vehicle)
             }
         }.getOrDefault(emptyList())
     }
@@ -78,12 +79,13 @@ private fun PartInventoryItem.toJson(): JSONObject = JSONObject()
     .put("name", name)
     .put("manufacturer", manufacturer)
     .put("repairTitle", repairTitle)
+    .put("repairId", repairId)
     .put("quantity", quantity)
     .put("purchasePrice", purchasePrice)
     .put("realOemUrl", realOemUrl)
     .put("photoUri", photoUri)
 
-private fun JSONObject.toPartInventoryItem(): PartInventoryItem = PartInventoryItem(
+private fun JSONObject.toPartInventoryItem(vehicle: Vehicle): PartInventoryItem = PartInventoryItem(
     id = optString("id"),
     oemPartNumber = optString("oemPartNumber"),
     manufacturerPartNumber = optString("manufacturerPartNumber"),
@@ -93,7 +95,16 @@ private fun JSONObject.toPartInventoryItem(): PartInventoryItem = PartInventoryI
     quantity = optInt("quantity", 1),
     purchasePrice = optString("purchasePrice"),
     realOemUrl = optString("realOemUrl").ifBlank { null },
-    photoUri = optString("photoUri").ifBlank { null }
+    photoUri = optString("photoUri").ifBlank { null },
+    repairId = optString("repairId").ifBlank {
+        optString("repairTitle").takeIf { it.isNotBlank() }?.let { repairTitle ->
+            stableRepairId(
+                title = repairTitle,
+                area = VehicleArea.Service,
+                vehicleName = vehicle.displayName
+            )
+        }
+    }
 )
 
 private fun ShoppingListItem.toJson(): JSONObject = JSONObject()
@@ -103,6 +114,7 @@ private fun ShoppingListItem.toJson(): JSONObject = JSONObject()
     .put("name", name)
     .put("manufacturer", manufacturer)
     .put("repairTitle", repairTitle)
+    .put("repairId", repairId)
     .put("area", area.name)
     .put("quantity", quantity)
     .put("source", source)
@@ -111,16 +123,26 @@ private fun ShoppingListItem.toJson(): JSONObject = JSONObject()
     .put("shopUrl", shopUrl)
     .put("realOemUrl", realOemUrl)
 
-private fun JSONObject.toShoppingListItem(): ShoppingListItem = ShoppingListItem(
+private fun JSONObject.toShoppingListItem(vehicle: Vehicle): ShoppingListItem {
+    val area = optString("area")
+        .let { rawArea -> VehicleArea.entries.firstOrNull { it.name == rawArea } }
+        ?: VehicleArea.Service
+    val repairTitle = optString("repairTitle")
+    return ShoppingListItem(
     id = optString("id"),
     partNumber = optString("partNumber"),
     manufacturerPartNumber = optString("manufacturerPartNumber"),
     name = optString("name"),
     manufacturer = optString("manufacturer"),
-    repairTitle = optString("repairTitle"),
-    area = optString("area")
-        .let { rawArea -> VehicleArea.entries.firstOrNull { it.name == rawArea } }
-        ?: VehicleArea.Service,
+    repairTitle = repairTitle,
+    repairId = optString("repairId").ifBlank {
+        stableRepairId(
+            title = repairTitle,
+            area = area,
+            vehicleName = vehicle.displayName
+        )
+    },
+    area = area,
     quantity = optInt("quantity", 1),
     source = optString("source"),
     price = optString("price"),
@@ -128,3 +150,4 @@ private fun JSONObject.toShoppingListItem(): ShoppingListItem = ShoppingListItem
     shopUrl = optString("shopUrl").ifBlank { null },
     realOemUrl = optString("realOemUrl").ifBlank { null }
 )
+}

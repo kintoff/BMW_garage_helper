@@ -11,6 +11,7 @@ data class PartInventoryItem(
     val purchasePrice: String,
     val realOemUrl: String?,
     val photoUri: String? = null,
+    val repairId: String? = null,
 ) {
     val partNumber: String
         get() = oemPartNumber.ifBlank { manufacturerPartNumber }

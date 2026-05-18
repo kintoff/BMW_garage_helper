@@ -448,7 +448,8 @@ private fun ShoppingListItem.toInventoryPart(nextId: String): PartInventoryItem 
         quantity = quantity,
         purchasePrice = price.ifBlank { "do uzupelnienia" },
         realOemUrl = realOemUrl,
-        photoUri = imageUri
+        photoUri = imageUri,
+        repairId = repairId.ifBlank { null }
     )
 
 @Composable
@@ -1859,7 +1860,8 @@ private fun ManualPartEntryDialog(
                             quantity = quantity.toIntOrNull() ?: 1,
                             purchasePrice = purchasePrice.ifBlank { "do uzupelnienia" },
                             realOemUrl = initialPart?.realOemUrl,
-                            photoUri = initialPart?.photoUri
+                            photoUri = initialPart?.photoUri,
+                            repairId = initialPart?.repairId
                         )
                     )
                 }
