@@ -1,6 +1,6 @@
 # Aktualny stan UX
 
-Ostatnia aktualizacja: 2026-05-18
+Ostatnia aktualizacja: 2026-05-19
 
 Ten dokument zapisuje, gdzie skonczylismy prace nad przebudowa UI i co jest juz podpiete funkcjonalnie.
 
@@ -57,6 +57,7 @@ Zrobione:
 - `Plan dzialania` jest checklista checkpointow,
 - checkpointy mozna odhaczac,
 - checkpointy mozna dodawac z poziomu zakladki,
+- checkpointy mozna edytowac i usuwac z poziomu zakladki,
 - checkpointy zapisuja sie w modelu `RepairProject`.
 
 Model:
@@ -67,30 +68,66 @@ Model:
 
 Do dopracowania pozniej:
 
-- usuwanie i edycja pojedynczego checkpointu,
 - ewentualne przeciaganie kolejnosci,
 - lepsze stany pustej listy.
+
+## Naprawa - Czesci
+
+Zrobione:
+
+- sekcja `Czesci do ustalenia` zostala zastapiona przez `Lista zakupow`,
+- `Lista zakupow` pokazuje pozycje z listy zakupow przypisane do konkretnej naprawy przez `repairId`,
+- `Na stanie` pokazuje czesci z magazynu przypisane do konkretnej naprawy,
+- wiersze czesci sa bardziej zwarte: nazwa, numer, ilosc i status po prawej,
+- przycisk `Dodaj czesc` prowadzi do listy zakupow dla tej naprawy.
+- klikniecie `Schematy czescidobmw.pl` od razu laduje schematy bez dodatkowego przycisku,
+- widok wybranego schematu ma mniejszy tytul, wiekszy obraz i czytelniejsze rekordy czesci,
+- wybor czesci ze schematu uzywa ikony zamiast tekstu `Wybierz`.
+- obraz schematu obsluguje przyblizanie i przesuwanie gestem dwoch palcow,
+- usunieto podpowiedz `Kliknij schemat, aby powiekszyc`, dzieki czemu lista czesci zaczyna sie wyzej.
+- klikniecie czesci na schemacie otwiera wybor dostepnych produktow ze sklepu po numerze OEM,
+- okno wyboru produktu automatycznie wyszukuje oferty, pozwala wybrac konkretna czesc i ustawic ilosc,
+- produkt dodany ze sklepu trafia do listy zakupow z cena, linkiem i zdjeciem podgladowym, jesli sklep je zwroci.
+- lista zakupow pokazuje miniatury zdjec czesci, jesli sa dostepne,
+- przy pozycji zakupowej jest akcja `Do magazynu`, ktora pozwala dodac calosc albo wybrana ilosc,
+- w oknie `Do magazynu` klikniecie `Dodaj calosc` od razu przenosi komplet, a `Dodaj ilosc` ma wlasny przycisk dla wpisanej liczby,
+- czesciowe dodanie do magazynu aktualizuje pozostala ilosc na liscie zakupow,
+- dodawanie do magazynu z poziomu naprawy ma opcje skanowania etykiety,
+- przycisk `Dodaj czesc` pozwala wybrac dodanie do `Lista zakupow` albo bezposrednio do `Magazyn`.
+- usuniecie lub edycja rekordu w magazynie aktualizuje wspolny stan auta, wiec powiazane czesci znikaja tez z `Naprawy -> Czesci`.
+
+Do dopracowania pozniej:
+
+- dodawanie czesci do listy zakupow bez przechodzenia do osobnego ekranu magazynu,
+- lepsze liczenie brakow, kiedy czesc ma rozne numery OEM i producenta.
+- dalsze dopieszczenie ikon wyboru po podpieciu docelowego zestawu ikon.
 
 ## Naprawa - Dokumenty
 
 Zrobione:
 
+- zakladka w szczegolach naprawy nazywa sie `Dokumentacja`,
 - zakladka jest podzielona na:
   - `Linki TIS`,
   - `Pliki i dokumenty`,
   - `Youtube`,
   - `Zdjecia i filmy`,
-- YouTube ma miec kafel z miniatura,
+- kazda glowna sekcja ma szybkie dodawanie elementu,
+- dodawanie nie otwiera juz starego ekranu dokumentacji,
+- linki TIS mozna dodawac, otwierac, edytowac i usuwac,
+- pliki i dokumenty mozna dodawac z systemowego wybieraka, widac ich nazwe i rozmiar, mozna je otworzyc, edytowac i usuwac,
+- YouTube ma kafel z miniatura, tytulem dopasowanym do kafla i akcjami edycji/usuwania po dlugim przytrzymaniu,
 - zdjecia i filmy maja podglad w 4 rownych kafelkach,
 - ostatni kafelek moze pokazywac licznik pozostalych mediow,
-- na dole jest przycisk `Dodaj`.
+- zdjecia i filmy sa wybierane przez trwaly dostep do pliku, zeby miniatury nie znikaly po ponownym uruchomieniu aplikacji,
+- dlugie przytrzymanie zdjecia lub filmu pokazuje akcje `Edytuj` i `Usun`,
+- klikniecie zdjecia lub filmu otwiera pelnoekranowa galerie,
+- galeria obsluguje przesuwanie miedzy mediami, powiekszanie dwoma palcami, podwojne tapniecie i przesuwanie powiekszonego zdjecia.
 
 Do dopracowania pozniej:
 
-- realne pobieranie miniatur YouTube,
-- dodawanie elementow do konkretnej kategorii,
-- otwieranie podgladu zdjec i filmow,
-- rozdzielenie typow dodawania: TIS, plik, YouTube, media.
+- dalsze testy gestow galerii na fizycznym telefonie,
+- ewentualne dopracowanie animacji i bezwladnosci galerii pod Android Gallery.
 
 ## Naprawa - Momenty
 
@@ -118,24 +155,28 @@ Ustalenie:
 
 - naprawa moze przejsc do `Zakonczone`,
 - dokumentacja zostaje przypisana przez `repairId`,
-- pozniej zbudujemy osobny widok historii lub archiwum dokumentacji,
-- zakończenie naprawy nie usuwa linkow, plikow, YouTube, zdjec, momentow ani notatek.
+- zakonczona naprawa trafia do `Dokumenty -> Archiwum napraw`,
+- archiwum napraw jest pogrupowane wedlug kategorii, np. silnik, nadwozie, hamulce,
+- ekran archiwalnej naprawy uzywa tego samego widoku szczegolow co aktywna naprawa,
+- `Dokumenty` maja tez sekcje `Dokumentacja ogolna`,
+- zakonczenie naprawy nie usuwa linkow, plikow, YouTube, zdjec, momentow ani notatek,
+- po zakonczeniu naprawy czesci wykorzystane z magazynu sa zdejmowane ze stanu,
+- lista zakupow i uzyte czesci trafiaja do archiwalnej dokumentacji naprawy jako zapis tego, co zostalo wykorzystane.
 
-## Ograniczenia techniczne na teraz
-
-Pelny build Gradle nie zostal uruchomiony, bo lokalne srodowisko nie ma dostepnego Java Runtime.
+## Sprawdzenie techniczne
 
 Sprawdzone:
 
-- `git diff --check` przechodzi bez bledow,
-- usuniete zostaly duplikaty `* 2.dex`, ktore powodowaly bledy `defined multiple times`.
+- `:app:compileDebugKotlin` przechodzi,
+- `:app:assembleDebug` przechodzi,
+- Gradle czasem pokazuje lokalne ostrzezenie o Kotlin daemon i `.android`, ale kompilacja konczy sie sukcesem po fallbacku.
 
 ## Najblizszy powrot do pracy
 
 Proponowana kolejnosc:
 
 1. Odpalic projekt po zainstalowaniu/ustawieniu Java Runtime.
-2. Sprawdzic ekran `Naprawy -> Opis` na telefonie/emulatorze.
-3. Dopiac edycje/usuwanie checkpointow.
-4. Wrocic do zakladki `Dokumenty` i podpiac dodawanie elementow do kategorii.
+2. Sprawdzic galerie dokumentacji na fizycznym telefonie po dluzszym uzyciu: zoom, przesuwanie, powrot i ponowne otwarcie.
+3. Sprawdzic flow zakonczenia naprawy: magazyn, archiwalna lista zakupow i dokumentacja.
+4. Dopracowac sekcje `Dokumentacja ogolna` w `Dokumenty`.
 5. Potem przejsc do importu/edycji momentow w zakladce `Momenty`.

@@ -22,6 +22,9 @@ class PartInventoryStorage(context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    fun hasParts(vehicle: Vehicle): Boolean =
+        preferences.contains(vehicle.storageKey())
+
     fun saveParts(
         vehicle: Vehicle,
         parts: List<PartInventoryItem>,

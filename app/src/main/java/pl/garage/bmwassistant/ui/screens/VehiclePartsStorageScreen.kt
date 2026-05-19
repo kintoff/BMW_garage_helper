@@ -93,6 +93,8 @@ fun VehiclePartsStorageScreen(
     initialShoppingRepairTitle: String? = null,
     initialShoppingArea: VehicleArea? = null,
     onInitialShoppingClosed: () -> Unit = {},
+    onInventoryUpdated: (List<PartInventoryItem>) -> Unit = {},
+    onShoppingListUpdated: (List<ShoppingListItem>) -> Unit = {},
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -108,7 +110,13 @@ fun VehiclePartsStorageScreen(
     var shoppingItemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
     var selectedSection by remember(initialSection) { mutableStateOf(initialSection) }
     var storedInventoryParts by remember(vehicle) {
-        mutableStateOf(partStorage.loadParts(vehicle).ifEmpty { inventoryParts })
+        mutableStateOf(
+            if (partStorage.hasParts(vehicle)) {
+                partStorage.loadParts(vehicle)
+            } else {
+                inventoryParts
+            }
+        )
     }
     var storedShoppingList by remember(vehicle) {
         mutableStateOf(
@@ -125,11 +133,13 @@ fun VehiclePartsStorageScreen(
     fun updateStoredParts(parts: List<PartInventoryItem>) {
         storedInventoryParts = parts
         partStorage.saveParts(vehicle, parts)
+        onInventoryUpdated(parts)
     }
 
     fun updateShoppingList(items: List<ShoppingListItem>) {
         storedShoppingList = items
         partStorage.saveShoppingList(vehicle, items)
+        onShoppingListUpdated(items)
     }
 
     BackHandler(enabled = selectedSection != null) {
@@ -225,7 +235,11 @@ fun VehiclePartsStorageScreen(
             initialPart = part,
             onDismiss = { partPendingEdit = null },
             onSave = { updatedPart ->
-                updateStoredParts(storedInventoryParts.map { if (it.id == part.id) updatedPart else it })
+                updateStoredParts(
+                    storedInventoryParts.map {
+                        if (it.stableId() == part.stableId()) updatedPart else it
+                    }
+                )
                 partPendingEdit = null
             }
         )
@@ -235,7 +249,7 @@ fun VehiclePartsStorageScreen(
         ConfirmDeletePartDialog(
             part = part,
             onConfirm = {
-                updateStoredParts(storedInventoryParts.filterNot { it.id == part.id })
+                updateStoredParts(storedInventoryParts.filterNot { it.stableId() == part.stableId() })
                 partPendingDeletion = null
             },
             onDismiss = { partPendingDeletion = null }
@@ -307,7 +321,9 @@ fun VehiclePartsStorageScreen(
                                 inventoryParts = allInventoryParts,
                                 onUpdatePart = { updatedPart ->
                                     updateStoredParts(
-                                        storedInventoryParts.map { if (it.id == updatedPart.id) updatedPart else it }
+                                        storedInventoryParts.map {
+                                            if (it.stableId() == updatedPart.stableId()) updatedPart else it
+                                        }
                                     )
                                 },
                                 onEditPart = { partPendingEdit = it },
@@ -398,7 +414,7 @@ private enum class InventorySearchColumn(val label: String) {
     Price("Cena zakupu"),
 }
 
-private data class MockPartLookupResult(
+data class MockPartLookupResult(
     val oemPartNumber: String,
     val manufacturerPartNumber: String,
     val name: String,
@@ -416,7 +432,7 @@ private data class MockPartLookupResult(
         get() = manufacturerPartNumber.ifBlank { oemPartNumber }
 }
 
-private data class ParsedPartLabel(
+data class ParsedPartLabel(
     val oemPartNumber: String?,
     val manufacturerPartNumber: String?,
     val manufacturer: String?,
@@ -434,10 +450,16 @@ private fun nextPartId(parts: List<PartInventoryItem>): String =
 private fun nextShoppingItemId(items: List<ShoppingListItem>): String =
     "shopping-${(items.mapNotNull { it.id.removePrefix("shopping-").toIntOrNull() }.maxOrNull() ?: 0) + 1}"
 
-private fun ShoppingListItem.stableId(): String =
+private fun PartInventoryItem.stableId(): String =
+    id.ifBlank { "$repairId|$repairTitle|$oemPartNumber|$manufacturerPartNumber|$name" }
+
+fun ShoppingListItem.stableId(): String =
     id.ifBlank { "$repairTitle|$partNumber|$manufacturerPartNumber|$name" }
 
-private fun ShoppingListItem.toInventoryPart(nextId: String): PartInventoryItem =
+fun ShoppingListItem.toInventoryPart(
+    nextId: String,
+    receivedQuantity: Int = quantity,
+): PartInventoryItem =
     PartInventoryItem(
         id = nextId,
         oemPartNumber = partNumber.ifBlank { "do uzupelnienia" },
@@ -445,7 +467,7 @@ private fun ShoppingListItem.toInventoryPart(nextId: String): PartInventoryItem 
         name = name,
         manufacturer = manufacturer.ifBlank { "do uzupelnienia" },
         repairTitle = repairTitle.ifBlank { null },
-        quantity = quantity,
+        quantity = receivedQuantity.coerceAtLeast(1),
         purchasePrice = price.ifBlank { "do uzupelnienia" },
         realOemUrl = realOemUrl,
         photoUri = imageUri,
@@ -530,7 +552,7 @@ private fun InventoryDatabaseSection(
     var photoUris by remember(inventoryParts) {
         mutableStateOf(
             inventoryParts.mapNotNull { part ->
-                part.photoUri?.let { uri -> part.id to uri }
+                part.photoUri?.let { uri -> part.stableId() to uri }
             }.toMap()
         )
     }
@@ -541,7 +563,7 @@ private fun InventoryDatabaseSection(
         if (partId != null && uri != null) {
             val photoUri = uri.toString()
             photoUris = photoUris + (partId to photoUri)
-            inventoryParts.firstOrNull { it.id == partId }?.let { part ->
+            inventoryParts.firstOrNull { it.stableId() == partId }?.let { part ->
                 onUpdatePart(part.copy(photoUri = photoUri))
             }
         }
@@ -658,7 +680,7 @@ private fun InventoryDatabaseSection(
                     photoPickerLauncher.launch("image/*")
                 },
                 onSetPhotoUrl = { part, photoUrl ->
-                    photoUris = photoUris + (part.id to photoUrl)
+                    photoUris = photoUris + (part.stableId() to photoUrl)
                     onUpdatePart(part.copy(photoUri = photoUrl))
                 },
                 onEditPart = onEditPart,
@@ -685,8 +707,8 @@ private fun InventoryDatabaseTable(
             parts.forEach { part ->
                 InventoryTableRow(
                     part = part,
-                    photoUri = photoUris[part.id],
-                    onAddPhoto = { onAddPhoto(part.id) },
+                    photoUri = photoUris[part.stableId()],
+                    onAddPhoto = { onAddPhoto(part.stableId()) },
                     onSetPhotoUrl = { photoUrl -> onSetPhotoUrl(part, photoUrl) },
                     onEditPart = { onEditPart(part) },
                     onDeletePart = { onDeletePart(part) }
@@ -899,7 +921,7 @@ private fun InventoryPhotoCell(
 }
 
 @Composable
-private fun PartPhotoContent(
+fun PartPhotoContent(
     photoUri: String?,
     height: Dp = 52.dp,
 ) {
@@ -2059,13 +2081,15 @@ private fun ShoppingPartLookupDialog(
 }
 
 @Composable
-private fun ExternalPartLookupDialog(
+fun ExternalPartLookupDialog(
     nextId: String,
+    initialRepairTitle: String = "",
+    initialRepairId: String? = null,
     onDismiss: () -> Unit,
     onSave: (PartInventoryItem) -> Unit,
 ) {
     var partNumber by remember { mutableStateOf("") }
-    var repairTitle by remember { mutableStateOf("") }
+    var repairTitle by remember { mutableStateOf(initialRepairTitle) }
     var quantity by remember { mutableStateOf("1") }
     var lookupResults by remember { mutableStateOf(emptyList<MockPartLookupResult>()) }
     var selectedResult by remember { mutableStateOf<MockPartLookupResult?>(null) }
@@ -2326,7 +2350,8 @@ private fun ExternalPartLookupDialog(
                             quantity = quantityValue ?: 1,
                             purchasePrice = lookup.shopPrice,
                             realOemUrl = lookup.realOemUrl,
-                            photoUri = lookup.imageUrl
+                            photoUri = lookup.imageUrl,
+                            repairId = initialRepairId
                         )
                     )
                 }
@@ -2343,7 +2368,7 @@ private fun ExternalPartLookupDialog(
 }
 
 @Composable
-private fun LookupResultCard(
+fun LookupResultCard(
     title: String,
     subtitle: String,
     primary: String,
@@ -2421,7 +2446,7 @@ private fun LookupResultCard(
     }
 }
 
-private fun mockPartLookup(partNumber: String): MockPartLookupResult {
+fun mockPartLookup(partNumber: String): MockPartLookupResult {
     val normalizedPartNumber = partNumber.filter { it.isLetterOrDigit() }.ifBlank { "33326760349" }
     return MockPartLookupResult(
         oemPartNumber = normalizedPartNumber,
@@ -2439,7 +2464,7 @@ private fun mockPartLookup(partNumber: String): MockPartLookupResult {
     )
 }
 
-private suspend fun fetchCzescidobmwResults(partNumber: String): List<MockPartLookupResult> =
+suspend fun fetchCzescidobmwResults(partNumber: String): List<MockPartLookupResult> =
     withContext(Dispatchers.IO) {
         val normalizedPartNumber = partNumber.filter { it.isLetterOrDigit() }
         if (normalizedPartNumber.isBlank()) return@withContext emptyList()
@@ -2562,7 +2587,7 @@ private fun imageSearchUrlFor(
     return "https://www.google.com/search?tbm=isch&q=$query"
 }
 
-private fun recognizePartLabelFromBitmap(
+fun recognizePartLabelFromBitmap(
     bitmap: Bitmap,
     onResult: (ParsedPartLabel) -> Unit,
     onError: (String) -> Unit,

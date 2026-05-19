@@ -44,10 +44,10 @@ import pl.garage.bmwassistant.R
 import pl.garage.bmwassistant.data.PartInventoryStorage
 import pl.garage.bmwassistant.data.RepairProjectStorage
 import pl.garage.bmwassistant.data.sampleConsumablesFor
-import pl.garage.bmwassistant.data.sampleInventoryPartsFor
 import pl.garage.bmwassistant.data.sampleRepairDocumentationFor
 import pl.garage.bmwassistant.data.sampleRepairsFor
 import pl.garage.bmwassistant.data.sampleShoppingListFor
+import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
 import pl.garage.bmwassistant.model.ShoppingListItem
@@ -82,6 +82,7 @@ fun VehicleOverviewScreen(
     var initialRepairListRepairTitle by remember { mutableStateOf<String?>(null) }
     var initialShoppingRepairTitle by remember { mutableStateOf<String?>(null) }
     var initialShoppingArea by remember { mutableStateOf<VehicleArea?>(null) }
+    var isDocumentationDetailsOpen by remember { mutableStateOf(false) }
     var shouldReturnFromDocumentationToRepairs by remember { mutableStateOf(false) }
     var shouldReturnFromShoppingToRepairs by remember { mutableStateOf(false) }
     var repairProjects by remember(currentVehicle) {
@@ -92,6 +93,18 @@ fun VehicleOverviewScreen(
             repairStorage.loadDocumentation(currentVehicle)
                 .ifEmpty { sampleRepairDocumentationFor(currentVehicle) }
         )
+    }
+    var shoppingListItems by remember(currentVehicle) {
+        mutableStateOf(
+            if (partStorage.hasShoppingList(currentVehicle)) {
+                partStorage.loadShoppingList(currentVehicle)
+            } else {
+                sampleShoppingListFor(currentVehicle)
+            }
+        )
+    }
+    var inventoryPartItems by remember(currentVehicle) {
+        mutableStateOf(partStorage.loadParts(currentVehicle))
     }
 
     fun updateRepairs(repairs: List<RepairProject>) {
@@ -106,12 +119,34 @@ fun VehicleOverviewScreen(
 
     fun appendShoppingItems(items: List<ShoppingListItem>) {
         if (items.isEmpty()) return
-        val currentItems = if (partStorage.hasShoppingList(currentVehicle)) {
+        val updatedItems = shoppingListItems + items
+        shoppingListItems = updatedItems
+        partStorage.saveShoppingList(currentVehicle, updatedItems)
+    }
+
+    fun updateShoppingItems(items: List<ShoppingListItem>) {
+        shoppingListItems = items
+        partStorage.saveShoppingList(currentVehicle, items)
+    }
+
+    fun appendInventoryPart(part: PartInventoryItem) {
+        val updatedParts = inventoryPartItems + part
+        inventoryPartItems = updatedParts
+        partStorage.saveParts(currentVehicle, updatedParts)
+    }
+
+    fun updateInventoryParts(parts: List<PartInventoryItem>) {
+        inventoryPartItems = parts
+        partStorage.saveParts(currentVehicle, parts)
+    }
+
+    fun refreshShoppingList() {
+        shoppingListItems = if (partStorage.hasShoppingList(currentVehicle)) {
             partStorage.loadShoppingList(currentVehicle)
         } else {
-            sampleShoppingListFor(currentVehicle)
+            shoppingListItems
         }
-        partStorage.saveShoppingList(currentVehicle, currentItems + items)
+        inventoryPartItems = partStorage.loadParts(currentVehicle)
     }
 
     BackHandler(enabled = selectedModule != null) {
@@ -139,38 +174,68 @@ fun VehicleOverviewScreen(
     if (selectedModule?.type == VehicleModuleType.Status) {
         VehicleStatusScreen(
             vehicle = currentVehicle,
-            activeRepairAreas = repairProjects.map { it.area }.toSet(),
+            activeRepairAreas = repairProjects.filterNot { it.status.isFinishedStatus() }.map { it.area }.toSet(),
             onBack = { selectedModule = null }
         )
         return
     }
 
     if (selectedModule?.type == VehicleModuleType.Repairs) {
-        val inventoryParts = partStorage.loadParts(currentVehicle).ifEmpty {
-            sampleInventoryPartsFor(currentVehicle)
-        }
         VehicleRepairListScreen(
             vehicle = currentVehicle,
             repairs = repairProjects,
             repairDocumentation = repairDocumentation,
-            inventoryParts = inventoryParts,
+            inventoryParts = inventoryPartItems,
+            shoppingList = shoppingListItems,
             initialRepairTitle = initialRepairListRepairTitle,
             onRepairAdded = { repair, documentation ->
                 updateRepairs(repairProjects + repair)
                 updateRepairDocumentation(repairDocumentation + documentation)
             },
             onRepairUpdated = { updatedRepair ->
+                val previousRepair = repairProjects.firstOrNull { it.id == updatedRepair.id }
+                val movedToArchive = previousRepair?.status?.isFinishedStatus() != true &&
+                    updatedRepair.status.isFinishedStatus()
                 updateRepairs(
                     repairProjects.map { repair ->
                         if (repair.id == updatedRepair.id) updatedRepair else repair
                     }
                 )
+                if (movedToArchive) {
+                    val archivedShoppingList = shoppingListItems.filter { it.belongsToRepair(updatedRepair) } +
+                        inventoryPartItems
+                            .filter { it.belongsToRepair(updatedRepair) }
+                            .map { it.toArchivedShoppingListItem(updatedRepair) }
+                    updateRepairDocumentation(
+                        repairDocumentation.map { documentation ->
+                            if (documentation.belongsToRepair(updatedRepair)) {
+                                documentation.copy(archivedShoppingList = archivedShoppingList)
+                            } else {
+                                documentation
+                            }
+                        }
+                    )
+                    updateShoppingItems(
+                        shoppingListItems.filterNot { it.belongsToRepair(updatedRepair) }
+                    )
+                    updateInventoryParts(
+                        inventoryPartItems.filterNot { it.belongsToRepair(updatedRepair) }
+                    )
+                }
             },
             onOpenDocumentation = { documentation ->
                 initialDocumentationRepairTitle = documentation.repairTitle
                 initialRepairListRepairTitle = documentation.repairTitle
+                isDocumentationDetailsOpen = true
                 shouldReturnFromDocumentationToRepairs = true
                 selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
+            },
+            onDocumentationUpdated = { updatedDocumentation ->
+                updateRepairDocumentation(
+                    repairDocumentation.map { documentation ->
+                        if (documentation.belongsToRepair(updatedDocumentation)) updatedDocumentation else documentation
+                    }
+                )
             },
             onOpenShoppingList = { repair ->
                 initialShoppingRepairTitle = repair.title
@@ -181,6 +246,12 @@ fun VehicleOverviewScreen(
             },
             onAddShoppingItems = { items ->
                 appendShoppingItems(items)
+            },
+            onShoppingListUpdated = { items ->
+                updateShoppingItems(items)
+            },
+            onInventoryPartAdded = { part ->
+                appendInventoryPart(part)
             },
             onInitialRepairClosed = {
                 initialRepairListRepairTitle = null
@@ -194,9 +265,64 @@ fun VehicleOverviewScreen(
     }
 
     if (selectedModule?.type == VehicleModuleType.Documentation) {
+        if (!isDocumentationDetailsOpen) {
+            val archivedShoppingItems = repairDocumentation.flatMap { it.archivedShoppingList }
+            VehicleRepairListScreen(
+                vehicle = currentVehicle,
+                repairs = repairProjects,
+                repairDocumentation = repairDocumentation,
+                inventoryParts = emptyList(),
+                shoppingList = archivedShoppingItems,
+                initialRepairTitle = initialDocumentationRepairTitle,
+                onRepairAdded = { _, _ -> },
+                onRepairUpdated = { updatedRepair ->
+                    updateRepairs(
+                        repairProjects.map { repair ->
+                            if (repair.id == updatedRepair.id) updatedRepair else repair
+                        }
+                    )
+                },
+                onOpenDocumentation = { documentation ->
+                    initialDocumentationRepairTitle = documentation.repairTitle
+                    isDocumentationDetailsOpen = true
+                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
+                },
+                onDocumentationUpdated = { updatedDocumentation ->
+                    updateRepairDocumentation(
+                        repairDocumentation.map { documentation ->
+                            if (documentation.belongsToRepair(updatedDocumentation)) updatedDocumentation else documentation
+                        }
+                    )
+                },
+                onOpenShoppingList = { repair ->
+                    initialShoppingRepairTitle = repair.title
+                    initialShoppingArea = repair.area
+                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
+                },
+                onAddShoppingItems = {},
+                onShoppingListUpdated = {},
+                onInventoryPartAdded = {},
+                onInitialRepairClosed = {
+                    initialDocumentationRepairTitle = null
+                },
+                title = "Dokumenty",
+                selectedBottomItem = "Dokumenty",
+                showArchivedRepairs = true,
+                showAddRepairButton = false,
+                showGeneralDocumentationSection = true,
+                emptyText = "Brak zakonczonych napraw w archiwum.",
+                onBack = {
+                    initialDocumentationRepairTitle = null
+                    selectedModule = null
+                }
+            )
+            return
+        }
         VehicleDocumentationScreen(
             vehicle = currentVehicle,
             repairDocumentation = repairDocumentation,
+            repairProjects = repairProjects,
+            shoppingList = shoppingListItems,
             initialRepairTitle = initialDocumentationRepairTitle,
             returnToPreviousModuleOnBack = shouldReturnFromDocumentationToRepairs,
             onDocumentationUpdated = { updatedDocumentation ->
@@ -218,12 +344,13 @@ fun VehicleOverviewScreen(
             },
             onBack = {
                 initialDocumentationRepairTitle = null
+                isDocumentationDetailsOpen = false
                 if (shouldReturnFromDocumentationToRepairs) {
                     shouldReturnFromDocumentationToRepairs = false
                     selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
                 } else {
                     initialRepairListRepairTitle = null
-                    selectedModule = null
+                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
                 }
             }
         )
@@ -231,15 +358,10 @@ fun VehicleOverviewScreen(
     }
 
     if (selectedModule?.type == VehicleModuleType.PartsStorage) {
-        val storedShoppingList = if (partStorage.hasShoppingList(currentVehicle)) {
-            partStorage.loadShoppingList(currentVehicle)
-        } else {
-            sampleShoppingListFor(currentVehicle)
-        }
         VehiclePartsStorageScreen(
             vehicle = currentVehicle,
-            inventoryParts = sampleInventoryPartsFor(currentVehicle),
-            shoppingList = storedShoppingList,
+            inventoryParts = inventoryPartItems,
+            shoppingList = shoppingListItems,
             consumables = sampleConsumablesFor(),
             initialSection = if (initialShoppingRepairTitle == null) null else PartsStorageSection.Shopping,
             initialShoppingRepairTitle = initialShoppingRepairTitle,
@@ -248,7 +370,14 @@ fun VehicleOverviewScreen(
                 initialShoppingRepairTitle = null
                 initialShoppingArea = null
             },
+            onInventoryUpdated = { parts ->
+                inventoryPartItems = parts
+            },
+            onShoppingListUpdated = { items ->
+                shoppingListItems = items
+            },
             onBack = {
+                refreshShoppingList()
                 if (shouldReturnFromShoppingToRepairs) {
                     shouldReturnFromShoppingToRepairs = false
                     initialShoppingRepairTitle = null
@@ -271,13 +400,8 @@ fun VehicleOverviewScreen(
         )
     }
 
-    val storedShoppingList = if (partStorage.hasShoppingList(currentVehicle)) {
-        partStorage.loadShoppingList(currentVehicle)
-    } else {
-        sampleShoppingListFor(currentVehicle)
-    }
     val activeRepairs = repairProjects.filterNot { it.status.isFinishedStatus() }
-    val partsToBuy = storedShoppingList.take(3)
+    val partsToBuy = shoppingListItems.take(3)
     val bottomItems = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej")
 
     Surface(
@@ -309,7 +433,7 @@ fun VehicleOverviewScreen(
                     CarDashboardHeader(
                         vehicle = currentVehicle,
                         activeRepairs = activeRepairs.size,
-                        partsToBuy = storedShoppingList.size
+                        partsToBuy = shoppingListItems.size
                     )
                 }
 
@@ -524,6 +648,40 @@ private fun String.normalizedStatusLabel(): String = when {
     lowercase().contains("trak") -> "W trakcie"
     else -> this
 }
+
+private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
+
+private fun RepairDocumentation.belongsToRepair(updatedDocumentation: RepairDocumentation): Boolean =
+    repairId == updatedDocumentation.repairId ||
+        (
+            repairId.isBlank() &&
+                repairTitle == updatedDocumentation.repairTitle &&
+                area == updatedDocumentation.area
+            )
+
+private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
+
+private fun PartInventoryItem.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isNullOrBlank() && repairTitle == repair.title)
+
+private fun PartInventoryItem.toArchivedShoppingListItem(repair: RepairProject): ShoppingListItem =
+    ShoppingListItem(
+        id = id.ifBlank { "archived_${repair.id}_${partNumber}_${name}" },
+        partNumber = oemPartNumber,
+        manufacturerPartNumber = manufacturerPartNumber,
+        name = name,
+        manufacturer = manufacturer,
+        repairTitle = repair.title,
+        repairId = repair.id,
+        area = repair.area,
+        quantity = quantity,
+        source = "Magazyn",
+        price = purchasePrice,
+        imageUri = photoUri,
+        realOemUrl = realOemUrl
+    )
 
 private data class VehicleModule(
     val type: VehicleModuleType,

@@ -256,6 +256,7 @@ area
 repairId
 repairTitle
 summary
+archivedShoppingList
 tisLinks
 tisDocuments
 torqueSpecs
@@ -271,12 +272,14 @@ Uwagi:
 
 - `repairId` jest glownym powiazaniem dokumentacji z naprawa.
 - `repairTitle` zostaje jako etykieta i pole legacy dla starych danych.
+- `archivedShoppingList` przechowuje zapis listy zakupow i czesci wykorzystanych przy zamknietej naprawie.
 - `tisLinks`, `torqueSpecs`, `torqueDiagramImageUri`, `torqueDiagramAssignments` i `youtubeLinks` sa polami legacy utrzymywanymi dla zgodnosci ze starszym zapisem.
 - Nowy zapis uzywa `tisDocuments`, `torqueTables`, `youtubeVideos` i `personalNotes`.
 - Jedna dokumentacja naprawy moze zawierac wiele tabel momentow dokrecen.
 - Kazda tabela momentow moze miec wlasny schemat i wlasne przypisania punktow.
 - Dokumentacja moze byc eksportowana i importowana jako jeden pakiet `.bmwdoc.zip`.
-- Dokumentacja nie jest usuwana po zakonczeniu naprawy. Po zamknieciu naprawy pozostaje jako archiwum wiedzy i bedzie pokazywana w osobnym widoku historii/dokumentacji.
+- Dokumentacja nie jest usuwana po zakonczeniu naprawy. Po zamknieciu naprawy pozostaje jako archiwum wiedzy w `Dokumenty -> Archiwum napraw`.
+- Przy zamknieciu naprawy aplikacja zdejmuje z magazynu czesci przypisane do tej naprawy i zapisuje je w archiwalnej liscie zakupow dokumentacji.
 
 Przyklad:
 
@@ -287,6 +290,7 @@ Przyklad:
   "repairId": "repair_bmw_e61_520d_engine_wymiana_swiec_zarowych",
   "repairTitle": "Wymiana swiec zarowych",
   "summary": "Materialy potrzebne do naprawy ukladu swiec zarowych.",
+  "archivedShoppingList": [],
   "tisDocuments": [
     {
       "title": "TIS - demontaz kolektora",

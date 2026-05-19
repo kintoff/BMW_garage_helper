@@ -5,6 +5,7 @@ data class RepairDocumentation(
     val area: VehicleArea,
     val repairTitle: String,
     val summary: String,
+    val archivedShoppingList: List<ShoppingListItem> = emptyList(),
     val tisLinks: List<String> = emptyList(),
     val tisDocuments: List<TisDocumentationLink> = emptyList(),
     val torqueSpecs: List<TorqueSpec> = emptyList(),

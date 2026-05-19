@@ -1,16 +1,36 @@
 package pl.garage.bmwassistant.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.text.Html
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -26,6 +46,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -36,6 +59,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,13 +74,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import pl.garage.bmwassistant.data.sampleRepairsFor
 import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.PersonalDocumentationItem
@@ -65,11 +97,13 @@ import pl.garage.bmwassistant.model.RepairCheckpoint
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
 import pl.garage.bmwassistant.model.ShoppingListItem
+import pl.garage.bmwassistant.model.TisDocumentationLink
 import pl.garage.bmwassistant.model.TorqueDiagramAssignment
 import pl.garage.bmwassistant.model.TorqueSpec
 import pl.garage.bmwassistant.model.TorqueSpecTable
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
+import pl.garage.bmwassistant.model.YoutubeVideo
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.AccentBlue
@@ -97,21 +131,38 @@ fun VehicleRepairListScreen(
     repairs: List<RepairProject>,
     repairDocumentation: List<RepairDocumentation>,
     inventoryParts: List<PartInventoryItem>,
+    shoppingList: List<ShoppingListItem>,
     initialRepairTitle: String? = null,
     onRepairAdded: (RepairProject, RepairDocumentation) -> Unit,
     onRepairUpdated: (RepairProject) -> Unit,
     onOpenDocumentation: (RepairDocumentation) -> Unit,
+    onDocumentationUpdated: (RepairDocumentation) -> Unit,
     onOpenShoppingList: (RepairProject) -> Unit,
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
+    onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
+    onInventoryPartAdded: (PartInventoryItem) -> Unit,
     onInitialRepairClosed: () -> Unit = {},
+    title: String = "Naprawy",
+    selectedBottomItem: String = "Naprawy",
+    showArchivedRepairs: Boolean = false,
+    showAddRepairButton: Boolean = true,
+    showGeneralDocumentationSection: Boolean = false,
+    emptyText: String = "Brak aktywnych napraw. Zakonczone naprawy znajdziesz w Dokumentach.",
     onBack: () -> Unit,
 ) {
-    var expandedAreas by remember {
+    val visibleRepairs = remember(repairs, showArchivedRepairs) {
+        repairs.filter { repair ->
+            val isFinished = repair.status.isFinishedRepairStatus()
+            if (showArchivedRepairs) isFinished else !isFinished
+        }
+    }
+    var expandedAreas by remember(visibleRepairs) {
         mutableStateOf(
-            repairs.map { it.area }.toSet().ifEmpty { setOf(VehicleArea.Engine) }
+            visibleRepairs.map { it.area }
+                .toSet()
+                .ifEmpty { setOf(VehicleArea.Engine) }
         )
     }
-    var selectedFilter by remember { mutableStateOf("Aktywne") }
     var isChoosingRepairArea by remember { mutableStateOf(false) }
     var selectedAreaForNewRepair by remember { mutableStateOf<VehicleArea?>(null) }
     var selectedRepair by remember(initialRepairTitle, repairs) {
@@ -133,9 +184,15 @@ fun VehicleRepairListScreen(
             repair = repair,
             documentation = repairDocumentation.firstOrNull { it.belongsToRepair(repair) },
             availableParts = inventoryParts.filter { it.belongsToRepair(repair) },
+            shoppingItems = shoppingList.filter { it.belongsToRepair(repair) },
+            allShoppingItems = shoppingList,
+            isArchivedMode = showArchivedRepairs,
             onOpenDocumentation = onOpenDocumentation,
+            onDocumentationUpdated = onDocumentationUpdated,
             onOpenShoppingList = onOpenShoppingList,
             onAddShoppingItems = onAddShoppingItems,
+            onShoppingListUpdated = onShoppingListUpdated,
+            onInventoryPartAdded = onInventoryPartAdded,
             onRepairUpdated = { updatedRepair ->
                 selectedRepair = updatedRepair
                 onRepairUpdated(updatedRepair)
@@ -172,14 +229,6 @@ fun VehicleRepairListScreen(
         )
     }
 
-    val filteredRepairs = remember(repairs, selectedFilter) {
-        repairs.filter { repair ->
-            when (selectedFilter) {
-                "Zakonczone" -> repair.status.lowercase().contains("zakon")
-                else -> !repair.status.lowercase().contains("zakon")
-            }
-        }
-    }
     val bottomItems = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej")
 
     Surface(
@@ -199,36 +248,87 @@ fun VehicleRepairListScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Header(
-                            title = "Naprawy",
+                            title = title,
                             subtitle = vehicle.displayName.ifBlank { "Profil auta" }
                         )
-                        AddRepairButton(onClick = { isChoosingRepairArea = true })
+                        if (showAddRepairButton) {
+                            AddRepairButton(onClick = { isChoosingRepairArea = true })
+                        }
                     }
                 }
 
-                item {
-                    SegmentTabs(
-                        tabs = listOf("Aktywne", "Zakonczone"),
-                        selectedTab = selectedFilter,
-                        onSelect = { selectedFilter = it }
-                    )
+                if (showGeneralDocumentationSection) {
+                    item {
+                        GeneralDocumentationPanel()
+                    }
+                    item {
+                        Text(
+                            text = "Archiwum napraw",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
-                if (filteredRepairs.isEmpty()) {
+                if (visibleRepairs.isEmpty()) {
                     item {
                         GaragePanel {
                             Text(
-                                text = "Brak napraw w tej zakladce.",
+                                text = emptyText,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
                             )
                         }
                     }
+                } else if (showArchivedRepairs) {
+                    VehicleArea.entries.forEach { area ->
+                        val areaRepairs = visibleRepairs.filter { it.area == area }
+                        if (areaRepairs.isNotEmpty()) {
+                            item {
+                                ArchiveRepairAreaHeader(
+                                    area = area,
+                                    repairsCount = areaRepairs.size,
+                                    isExpanded = area in expandedAreas,
+                                    onToggle = {
+                                        expandedAreas = if (area in expandedAreas) {
+                                            expandedAreas - area
+                                        } else {
+                                            expandedAreas + area
+                                        }
+                                    }
+                                )
+                            }
+                            if (area in expandedAreas) {
+                                items(areaRepairs) { repair ->
+                                    RepairCard(
+                                        repair = repair,
+                                        documentation = repairDocumentation.firstOrNull { it.belongsToRepair(repair) },
+                                        partsCount = archivedPartsCount(
+                                            repair = repair,
+                                            repairDocumentation = repairDocumentation,
+                                            inventoryParts = inventoryParts
+                                        ),
+                                        showCompleteAction = false,
+                                        onComplete = {},
+                                        onClick = { selectedRepair = repair }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    items(filteredRepairs) { repair ->
+                    items(visibleRepairs) { repair ->
                         RepairCard(
                             repair = repair,
                             documentation = repairDocumentation.firstOrNull { it.belongsToRepair(repair) },
-                            partsCount = inventoryParts.count { it.belongsToRepair(repair) },
+                            partsCount = archivedPartsCount(
+                                repair = repair,
+                                repairDocumentation = repairDocumentation,
+                                inventoryParts = inventoryParts
+                            ),
+                            showCompleteAction = !showArchivedRepairs,
+                            onComplete = {
+                                onRepairUpdated(repair.copy(status = "Zakonczona"))
+                            },
                             onClick = { selectedRepair = repair }
                         )
                     }
@@ -236,9 +336,9 @@ fun VehicleRepairListScreen(
             }
             BottomNavBar(
                 items = bottomItems,
-                selectedItem = "Naprawy",
+                selectedItem = selectedBottomItem,
                 onSelect = { item ->
-                    if (item != "Naprawy") onBack()
+                    if (item != selectedBottomItem) onBack()
                 },
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
@@ -247,10 +347,104 @@ fun VehicleRepairListScreen(
 }
 
 @Composable
+private fun GeneralDocumentationPanel() {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "Dokumentacja ogolna",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+        GaragePanel {
+            Text(
+                text = "Dokumenty stale auta",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Miejsce na VIN, instrukcje, stale linki, PDF-y, schematy i notatki niezalezne od konkretnej naprawy.",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun ArchiveRepairAreaHeader(
+    area: VehicleArea,
+    repairsCount: Int,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(34.dp),
+                color = area.accentColor().copy(alpha = 0.18f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Image(
+                        painter = painterResource(area.iconResource()),
+                        contentDescription = area.label,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = area.label,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "$repairsCount zakonczonych napraw",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                    fontSize = 12.sp
+                )
+            }
+            Text(
+                text = if (isExpanded) "Zwin" else "Rozwin",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+private fun archivedPartsCount(
+    repair: RepairProject,
+    repairDocumentation: List<RepairDocumentation>,
+    inventoryParts: List<PartInventoryItem>,
+): Int =
+    inventoryParts.count { it.belongsToRepair(repair) }.takeIf { it > 0 }
+        ?: repairDocumentation.firstOrNull { it.belongsToRepair(repair) }
+            ?.archivedShoppingList
+            ?.size
+        ?: 0
+
+@Composable
 private fun RepairCard(
     repair: RepairProject,
     documentation: RepairDocumentation?,
     partsCount: Int,
+    showCompleteAction: Boolean,
+    onComplete: () -> Unit,
     onClick: () -> Unit,
 ) {
     GaragePanel(onClick = onClick) {
@@ -287,7 +481,15 @@ private fun RepairCard(
                     fontSize = 13.sp
                 )
             }
-            StatusBadge(repair.status.normalizedRepairStatus())
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StatusBadge(repair.status.normalizedRepairStatus())
+                if (showCompleteAction) {
+                    DoneRepairAction(onClick = onComplete)
+                }
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -302,6 +504,34 @@ private fun RepairCard(
                 text = "${documentation?.torqueSpecs?.size ?: 0} momentow",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
                 fontSize = 12.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun DoneRepairAction(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        color = AccentGreen.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "✓",
+                color = AccentGreen,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Done",
+                color = AccentGreen,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -603,9 +833,15 @@ private fun RepairDetailsScreen(
     repair: RepairProject,
     documentation: RepairDocumentation?,
     availableParts: List<PartInventoryItem>,
+    shoppingItems: List<ShoppingListItem>,
+    allShoppingItems: List<ShoppingListItem>,
+    isArchivedMode: Boolean = false,
     onOpenDocumentation: (RepairDocumentation) -> Unit,
+    onDocumentationUpdated: (RepairDocumentation) -> Unit,
     onOpenShoppingList: (RepairProject) -> Unit,
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
+    onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
+    onInventoryPartAdded: (PartInventoryItem) -> Unit,
     onRepairUpdated: (RepairProject) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -640,7 +876,7 @@ private fun RepairDetailsScreen(
             }
             item {
                 SegmentTabs(
-                    tabs = listOf("Opis", "Czesci", "Dokumenty", "Momenty", "Notatki"),
+                    tabs = listOf("Opis", "Czesci", "Dokumentacja", "Momenty", "Notatki"),
                     selectedTab = selectedTab,
                     onSelect = { selectedTab = it }
                 )
@@ -656,14 +892,19 @@ private fun RepairDetailsScreen(
                     RepairPartsTab(
                         repair = repair,
                         availableParts = availableParts,
+                        shoppingItems = shoppingItems,
+                        allShoppingItems = allShoppingItems,
+                        isArchivedMode = isArchivedMode,
                         onOpenShoppingList = { onOpenShoppingList(repair) },
-                        onOpenCatalog = { isCatalogVisible = true }
+                        onOpenCatalog = { isCatalogVisible = true },
+                        onShoppingListUpdated = onShoppingListUpdated,
+                        onInventoryPartAdded = onInventoryPartAdded
                     )
                 }
-                "Dokumenty" -> item {
+                "Dokumentacja" -> item {
                     RepairDocumentsTab(
                         documentation = documentation,
-                        onOpenDocumentation = onOpenDocumentation
+                        onDocumentationUpdated = onDocumentationUpdated
                     )
                 }
                 "Momenty" -> item { RepairTorqueTab(documentation) }
@@ -709,7 +950,22 @@ private fun RepairOverviewTab(
         mutableStateOf(repair.problemDescription)
     }
     var newCheckpointText by remember(repair.id) { mutableStateOf("") }
+    var checkpointBeingEdited by remember(repair.id) { mutableStateOf<RepairCheckpoint?>(null) }
     val checkpoints = repair.effectiveCheckpoints()
+
+    checkpointBeingEdited?.let { checkpoint ->
+        EditCheckpointDialog(
+            checkpoint = checkpoint,
+            onSave = { updatedText ->
+                val updatedCheckpoints = checkpoints.map { item ->
+                    if (item.id == checkpoint.id) item.copy(text = updatedText) else item
+                }
+                onRepairUpdated(repair.withCheckpoints(updatedCheckpoints))
+                checkpointBeingEdited = null
+            },
+            onDismiss = { checkpointBeingEdited = null }
+        )
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         GaragePanel {
@@ -757,6 +1013,15 @@ private fun RepairOverviewTab(
                                 if (item.id == checkpoint.id) item.copy(isDone = isDone) else item
                             }
                             onRepairUpdated(repair.withCheckpoints(updatedCheckpoints))
+                        },
+                        onEdit = {
+                            checkpointBeingEdited = checkpoint
+                        },
+                        onDelete = {
+                            val updatedCheckpoints = checkpoints.filterNot { item ->
+                                item.id == checkpoint.id
+                            }
+                            onRepairUpdated(repair.withCheckpoints(updatedCheckpoints))
                         }
                     )
                 }
@@ -795,6 +1060,8 @@ private fun RepairOverviewTab(
 private fun RepairCheckpointRow(
     checkpoint: RepairCheckpoint,
     onCheckedChange: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -812,120 +1079,806 @@ private fun RepairCheckpointRow(
                 alpha = if (checkpoint.isDone) 0.52f else 0.82f
             )
         )
+        TextButton(onClick = onEdit) {
+            Text("Edytuj")
+        }
+        TextButton(onClick = onDelete) {
+            Text("Usun")
+        }
     }
+}
+
+@Composable
+private fun EditCheckpointDialog(
+    checkpoint: RepairCheckpoint,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var textDraft by remember(checkpoint.id, checkpoint.text) {
+        mutableStateOf(checkpoint.text)
+    }
+    val trimmedText = textDraft.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edytuj checkpoint") },
+        text = {
+            GarageTextField(
+                value = textDraft,
+                onValueChange = { textDraft = it },
+                label = "Checkpoint",
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = "Co trzeba zrobic?"
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = trimmedText.isNotBlank(),
+                onClick = { onSave(trimmedText) }
+            ) {
+                Text("Zapisz")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
 }
 
 @Composable
 private fun RepairPartsTab(
     repair: RepairProject,
     availableParts: List<PartInventoryItem>,
+    shoppingItems: List<ShoppingListItem>,
+    allShoppingItems: List<ShoppingListItem>,
+    isArchivedMode: Boolean,
     onOpenShoppingList: () -> Unit,
     onOpenCatalog: () -> Unit,
+    onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
+    onInventoryPartAdded: (PartInventoryItem) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        GaragePanel(onClick = onOpenShoppingList) {
-            Text("Czesci do ustalenia", fontWeight = FontWeight.SemiBold)
-            if (repair.partsToIdentify.isEmpty()) {
-                Text("Brak pozycji na liscie.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f))
+    var itemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var isAddPartDialogVisible by remember { mutableStateOf(false) }
+    var isAddInventoryDialogVisible by remember { mutableStateOf(false) }
+
+    if (!isArchivedMode) {
+        itemPendingReceive?.let { item ->
+            ReceiveRepairShoppingItemDialog(
+                item = item,
+                onConfirm = { receivedQuantity ->
+                    onInventoryPartAdded(item.toInventoryPart(nextInventoryId(availableParts), receivedQuantity))
+                    onShoppingListUpdated(allShoppingItems.afterReceiving(item, receivedQuantity))
+                    itemPendingReceive = null
+                },
+                onDismiss = { itemPendingReceive = null }
+            )
+        }
+    }
+
+    if (!isArchivedMode && isAddPartDialogVisible) {
+        AddRepairPartDestinationDialog(
+            onShoppingList = {
+                isAddPartDialogVisible = false
+                onOpenShoppingList()
+            },
+            onInventory = {
+                isAddPartDialogVisible = false
+                isAddInventoryDialogVisible = true
+            },
+            onDismiss = { isAddPartDialogVisible = false }
+        )
+    }
+
+    if (!isArchivedMode && isAddInventoryDialogVisible) {
+        ExternalPartLookupDialog(
+            nextId = nextInventoryId(availableParts),
+            initialRepairTitle = repair.title,
+            initialRepairId = repair.id,
+            onDismiss = { isAddInventoryDialogVisible = false },
+            onSave = { part ->
+                onInventoryPartAdded(part)
+                isAddInventoryDialogVisible = false
+            }
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            text = "Lista zakupow",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+        GaragePanel(onClick = if (isArchivedMode) null else onOpenShoppingList) {
+            if (shoppingItems.isEmpty()) {
+                Text(
+                    text = "Brak czesci do kupienia dla tej naprawy.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
             } else {
-                repair.partsToIdentify.forEach { part ->
-                    Text("• $part", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f))
+                shoppingItems.forEach { item ->
+                    ShoppingPartSummaryRow(
+                        item = item,
+                        isArchived = isArchivedMode,
+                        onReceive = if (isArchivedMode) null else ({ itemPendingReceive = item })
+                    )
                 }
             }
-            StatusBadge("Do kupienia", AccentYellow)
         }
+
+        Text(
+            text = "Na stanie",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
         GaragePanel {
-            Text("Na stanie", fontWeight = FontWeight.SemiBold)
             if (availableParts.isEmpty()) {
-                Text("Brak czesci przypisanych do tej naprawy.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f))
+                Text(
+                    text = "Brak czesci przypisanych do tej naprawy.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
             } else {
                 availableParts.forEach { part ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(part.name, modifier = Modifier.weight(1f))
-                        Text("${part.quantity} szt.", color = AccentGreen)
-                    }
+                    InventoryPartSummaryRow(
+                        part = part,
+                        neededQuantity = shoppingItems
+                            .filter { item -> part.matchesShoppingItem(item) }
+                            .sumOf { item -> item.quantity }
+                    )
                 }
             }
         }
-        GaragePanel(onClick = onOpenCatalog) {
-            Text("Schematy czescidobmw.pl", fontWeight = FontWeight.SemiBold)
+
+        if (!isArchivedMode) {
+            GaragePanel(onClick = onOpenCatalog) {
+                Text("Schematy czescidobmw.pl", fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "Otworz schematy po VIN i dodaj OEM-y do listy zakupow.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
+            }
+
+            AddPartToRepairButton(onClick = { isAddPartDialogVisible = true })
+        }
+    }
+}
+
+@Composable
+private fun ShoppingPartSummaryRow(
+    item: ShoppingListItem,
+    isArchived: Boolean = false,
+    onReceive: (() -> Unit)?,
+) {
+    PartSummaryRow(
+        title = item.name,
+        subtitle = item.manufacturerPartNumber.ifBlank { item.partNumber.ifBlank { item.source } },
+        quantity = "${item.quantity} szt.",
+        badgeText = if (isArchived) "Historia" else "▣",
+        badgeColor = AccentBlue,
+        photoUri = item.imageUri,
+        onBadgeClick = onReceive
+    )
+}
+
+@Composable
+private fun InventoryPartSummaryRow(
+    part: PartInventoryItem,
+    neededQuantity: Int,
+) {
+    PartSummaryRow(
+        title = part.name,
+        subtitle = part.manufacturerPartNumber.ifBlank { part.partNumber },
+        quantity = "${part.quantity} szt.",
+        badgeText = if (neededQuantity > 0) "${part.quantity}/$neededQuantity" else "Na stanie",
+        badgeColor = if (neededQuantity > 0 && part.quantity < neededQuantity) AccentYellow else AccentGreen,
+        photoUri = part.photoUri
+    )
+}
+
+@Composable
+private fun PartSummaryRow(
+    title: String,
+    subtitle: String,
+    quantity: String,
+    badgeText: String,
+    badgeColor: Color,
+    photoUri: String? = null,
+    onBadgeClick: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(46.dp),
+            color = MaterialTheme.colorScheme.background.copy(alpha = 0.62f),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            PartPhotoContent(photoUri = photoUri, height = 46.dp)
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             Text(
-                text = "Pobierz schematy po VIN i dodaj OEM-y do listy zakupow.",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                text = title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = subtitle.ifBlank { "Bez numeru czesci" },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.64f),
+                fontSize = 13.sp,
+                maxLines = 1
+            )
+        }
+        Text(
+            text = quantity,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Surface(
+            modifier = Modifier
+                .then(if (onBadgeClick != null) Modifier.clickable(onClick = onBadgeClick) else Modifier),
+            color = badgeColor.copy(alpha = 0.18f),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text(
+                text = badgeText,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                color = badgeColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
 }
 
 @Composable
+private fun AddPartToRepairButton(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.primary,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = "+  Dodaj czesc",
+                color = MaterialTheme.colorScheme.onPrimary,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddRepairPartDestinationDialog(
+    onShoppingList: () -> Unit,
+    onInventory: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Dodaj czesc") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GaragePanel(onClick = onShoppingList) {
+                    Text("Lista zakupow", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Wyszukaj czesc po OEM i dodaj ja do zakupow tej naprawy.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                }
+                GaragePanel(onClick = onInventory) {
+                    Text("Magazyn", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Dodaj czesc na stan, rowniez przez skan etykiety.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ReceiveRepairShoppingItemDialog(
+    item: ShoppingListItem,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var quantityText by remember(item.stableId()) { mutableStateOf(item.quantity.toString()) }
+    var scanPreview by remember { mutableStateOf<Bitmap?>(null) }
+    var scanStatus by remember {
+        mutableStateOf("Mozesz dodac czesc recznie albo zeskanowac etykiete przed przeniesieniem do magazynu.")
+    }
+    var scannedLabel by remember { mutableStateOf<ParsedPartLabel?>(null) }
+    val quantityValue = quantityText.toIntOrNull()
+    val canAddQuantity = quantityValue != null && quantityValue in 1..item.quantity
+
+    fun recognizeBitmap(bitmap: Bitmap) {
+        scanPreview = bitmap
+        scanStatus = "Odczytuje etykiete..."
+        recognizePartLabelFromBitmap(
+            bitmap = bitmap,
+            onResult = { parsedLabel ->
+                scannedLabel = parsedLabel
+                val values = buildList {
+                    parsedLabel.oemPartNumber?.let { add("OEM: $it") }
+                    parsedLabel.manufacturerPartNumber?.let { add("producent: $it") }
+                    parsedLabel.manufacturer?.let { add("marka: $it") }
+                }
+                scanStatus = if (values.isEmpty()) {
+                    "Nie udalo sie pewnie odczytac etykiety. Nadal mozesz dodac czesc recznie."
+                } else {
+                    "Skan odczytany: ${values.joinToString(" / ")}."
+                }
+            },
+            onError = { message -> scanStatus = message }
+        )
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            recognizeBitmap(bitmap)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Do magazynu") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(item.name, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "Na liscie zakupow: ${item.quantity} szt. / OEM: ${item.partNumber}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
+                GaragePanel(onClick = { onConfirm(item.quantity) }) {
+                    Text("Dodaj calosc", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Dodaje wszystkie sztuki z pozycji do magazynu.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                }
+                GaragePanel {
+                    Text("Dodaj ilosc", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Podaj ile sztuk dodales do magazynu.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                    GarageTextField(
+                        value = quantityText,
+                        onValueChange = { quantityText = it.filter { character -> character.isDigit() } },
+                        label = "Ilosc",
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = item.quantity.toString(),
+                        keyboardType = KeyboardType.Number
+                    )
+                    TextButton(
+                        enabled = canAddQuantity,
+                        onClick = { onConfirm(quantityValue ?: 1) }
+                    ) {
+                        Text("Dodaj ${quantityValue ?: 0} szt.")
+                    }
+                }
+                GaragePanel {
+                    Text("Skan etykiety", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = scanStatus,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.66f)
+                    )
+                    scanPreview?.let { bitmap ->
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Skan etykiety czesci",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(150.dp),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                    scannedLabel?.let { label ->
+                        Text(
+                            text = "Odczyt: ${label.oemPartNumber ?: item.partNumber}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    TextButton(onClick = { cameraLauncher.launch(null) }) {
+                        Text("Zeskanuj etykiete")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
 private fun RepairDocumentsTab(
     documentation: RepairDocumentation?,
-    onOpenDocumentation: (RepairDocumentation) -> Unit,
+    onDocumentationUpdated: (RepairDocumentation) -> Unit,
 ) {
-    val tisLinks = documentation?.tisDocuments.orEmpty()
-    val legacyTisLinks = documentation?.tisLinks.orEmpty()
+    var isChoosingAddType by remember { mutableStateOf(false) }
+    var isAddingTisLink by remember { mutableStateOf(false) }
+    var isAddingYoutubeLink by remember { mutableStateOf(false) }
+    var isAddingPersonalLink by remember { mutableStateOf(false) }
+    var selectedMediaIndex by remember { mutableStateOf<Int?>(null) }
+    var tisPendingAction by remember { mutableStateOf<RepairIndexedTisLink?>(null) }
+    var youtubePendingAction by remember { mutableStateOf<RepairIndexedYoutubeVideo?>(null) }
+    var filePendingAction by remember { mutableStateOf<PersonalDocumentationItem?>(null) }
+    var tisPendingEdit by remember { mutableStateOf<RepairIndexedTisLink?>(null) }
+    var youtubePendingEdit by remember { mutableStateOf<RepairIndexedYoutubeVideo?>(null) }
+    var filePendingEdit by remember { mutableStateOf<PersonalDocumentationItem?>(null) }
+    val effectiveTisLinks = documentation?.effectiveTisDocuments().orEmpty()
     val files = documentation?.personalNotes.orEmpty().filter {
         it.type == PersonalDocumentationItemType.Document || it.type == PersonalDocumentationItemType.File
     }
     val media = documentation?.personalNotes.orEmpty().filter {
         it.type == PersonalDocumentationItemType.Photo || it.type == PersonalDocumentationItemType.Video
     }
-    val videos = documentation?.youtubeVideos.orEmpty()
+    val videos = documentation?.effectiveYoutubeVideos().orEmpty()
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+
+    fun updateDocumentation(transform: (RepairDocumentation) -> RepairDocumentation) {
+        documentation?.let { currentDocumentation ->
+            onDocumentationUpdated(transform(currentDocumentation))
+        }
+    }
+
+    fun addPersonalFile(
+        type: PersonalDocumentationItemType,
+        uri: Uri,
+    ) {
+        persistReadPermission(context, uri)
+        val displayName = context.displayNameForUri(uri)
+        updateDocumentation { currentDocumentation ->
+            currentDocumentation.copy(
+                personalNotes = currentDocumentation.personalNotes + PersonalDocumentationItem(
+                    id = "personal-${System.currentTimeMillis()}",
+                    type = type,
+                    title = displayName
+                        ?: uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')?.ifBlank { null }
+                        ?: type.defaultDocumentationTitle(),
+                    text = context.sizeLabelForUri(uri) ?: type.defaultDocumentationTitle(),
+                    uri = uri.toString()
+                )
+            )
+        }
+    }
+
+    val documentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { addPersonalFile(PersonalDocumentationItemType.Document, it) }
+    }
+    val photoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { addPersonalFile(PersonalDocumentationItemType.Photo, it) }
+    }
+    val videoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { addPersonalFile(PersonalDocumentationItemType.Video, it) }
+    }
+
+    if (isChoosingAddType) {
+        AddDocumentationItemDialog(
+            onAddTisLink = {
+                isChoosingAddType = false
+                isAddingTisLink = true
+            },
+            onAddDocument = {
+                isChoosingAddType = false
+                documentLauncher.launch(
+                    arrayOf(
+                        "application/pdf",
+                        "application/msword",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "text/plain",
+                        "application/octet-stream"
+                    )
+                )
+            },
+            onAddYoutube = {
+                isChoosingAddType = false
+                isAddingYoutubeLink = true
+            },
+            onAddPhoto = {
+                isChoosingAddType = false
+                photoLauncher.launch(arrayOf("image/*"))
+            },
+            onAddVideo = {
+                isChoosingAddType = false
+                videoLauncher.launch(arrayOf("video/*"))
+            },
+            onAddLink = {
+                isChoosingAddType = false
+                isAddingPersonalLink = true
+            },
+            onDismiss = { isChoosingAddType = false }
+        )
+    }
+
+    if (isAddingTisLink) {
+        AddRepairTisLinkDialog(
+            onDismiss = { isAddingTisLink = false },
+            onSave = { link ->
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(tisDocuments = currentDocumentation.effectiveTisDocuments() + link)
+                }
+                isAddingTisLink = false
+            }
+        )
+    }
+
+    if (isAddingYoutubeLink) {
+        AddRepairYoutubeDialog(
+            onDismiss = { isAddingYoutubeLink = false },
+            onSave = { video ->
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(youtubeVideos = currentDocumentation.effectiveYoutubeVideos() + video)
+                }
+                isAddingYoutubeLink = false
+            }
+        )
+    }
+
+    if (isAddingPersonalLink) {
+        AddRepairPersonalLinkDialog(
+            onDismiss = { isAddingPersonalLink = false },
+            onSave = { item ->
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(personalNotes = currentDocumentation.personalNotes + item)
+                }
+                isAddingPersonalLink = false
+            }
+        )
+    }
+
+    tisPendingAction?.let { indexedLink ->
+        DocumentationItemActionsDialog(
+            title = indexedLink.link.title,
+            onEdit = {
+                tisPendingEdit = indexedLink
+                tisPendingAction = null
+            },
+            onDelete = {
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(
+                        tisDocuments = currentDocumentation.effectiveTisDocuments()
+                            .filterIndexed { index, _ -> index != indexedLink.index },
+                        tisLinks = emptyList()
+                    )
+                }
+                tisPendingAction = null
+            },
+            onDismiss = { tisPendingAction = null }
+        )
+    }
+
+    tisPendingEdit?.let { indexedLink ->
+        AddRepairTisLinkDialog(
+            initialLink = indexedLink.link,
+            onDismiss = { tisPendingEdit = null },
+            onSave = { link ->
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(
+                        tisDocuments = currentDocumentation.effectiveTisDocuments()
+                            .mapIndexed { index, currentLink ->
+                                if (index == indexedLink.index) link else currentLink
+                            },
+                        tisLinks = emptyList()
+                    )
+                }
+                tisPendingEdit = null
+            }
+        )
+    }
+
+    youtubePendingAction?.let { indexedVideo ->
+        DocumentationItemActionsDialog(
+            title = indexedVideo.video.title,
+            onEdit = {
+                youtubePendingEdit = indexedVideo
+                youtubePendingAction = null
+            },
+            onDelete = {
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(
+                        youtubeVideos = currentDocumentation.effectiveYoutubeVideos()
+                            .filterIndexed { index, _ -> index != indexedVideo.index },
+                        youtubeLinks = emptyList()
+                    )
+                }
+                youtubePendingAction = null
+            },
+            onDismiss = { youtubePendingAction = null }
+        )
+    }
+
+    youtubePendingEdit?.let { indexedVideo ->
+        AddRepairYoutubeDialog(
+            initialVideo = indexedVideo.video,
+            onDismiss = { youtubePendingEdit = null },
+            onSave = { video ->
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(
+                        youtubeVideos = currentDocumentation.effectiveYoutubeVideos()
+                            .mapIndexed { index, currentVideo ->
+                                if (index == indexedVideo.index) video else currentVideo
+                            },
+                        youtubeLinks = emptyList()
+                    )
+                }
+                youtubePendingEdit = null
+            }
+        )
+    }
+
+    filePendingAction?.let { file ->
+        DocumentationItemActionsDialog(
+            title = file.title,
+            onEdit = {
+                filePendingEdit = file
+                filePendingAction = null
+            },
+            onDelete = {
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(
+                        personalNotes = currentDocumentation.personalNotes.filterNot { it.id == file.id }
+                    )
+                }
+                filePendingAction = null
+            },
+            onDismiss = { filePendingAction = null }
+        )
+    }
+
+    filePendingEdit?.let { file ->
+        EditDocumentationFileDialog(
+            item = file,
+            onDismiss = { filePendingEdit = null },
+            onSave = { updatedFile ->
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(
+                        personalNotes = currentDocumentation.personalNotes.map { item ->
+                            if (item.id == updatedFile.id) updatedFile else item
+                        }
+                    )
+                }
+                filePendingEdit = null
+            }
+        )
+    }
+
+    selectedMediaIndex?.let { initialIndex ->
+        PersonalMediaGalleryDialog(
+            media = media,
+            initialIndex = initialIndex,
+            onDismiss = { selectedMediaIndex = null },
+            onOpen = { item ->
+                item.uri?.let { uri -> openDocumentUri(context, uri) }
+            },
+            onEdit = { item ->
+                filePendingEdit = item
+                selectedMediaIndex = null
+            },
+            onDelete = { item ->
+                updateDocumentation { currentDocumentation ->
+                    currentDocumentation.copy(
+                        personalNotes = currentDocumentation.personalNotes.filterNot { it.id == item.id }
+                    )
+                }
+                selectedMediaIndex = null
+            }
+        )
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        DocumentationSectionTitle("Linki TIS")
-        GaragePanel(onClick = documentation?.let { doc -> { onOpenDocumentation(doc) } }) {
-            if (tisLinks.isEmpty() && legacyTisLinks.isEmpty()) {
+        DocumentationSectionHeader(
+            title = "Linki TIS",
+            onAdd = if (documentation == null) null else ({ isAddingTisLink = true })
+        )
+        GaragePanel {
+            if (effectiveTisLinks.isEmpty()) {
                 EmptyDocumentationText("Brak linkow TIS.")
             } else {
-                tisLinks.forEach { link ->
+                effectiveTisLinks.forEachIndexed { index, link ->
                     DocumentationLinkRow(
                         title = link.title,
                         subtitle = "BMW TIS",
                         marker = "↗",
-                        accent = AccentBlue
-                    )
-                }
-                legacyTisLinks.forEach { url ->
-                    DocumentationLinkRow(
-                        title = url,
-                        subtitle = "BMW TIS",
-                        marker = "↗",
-                        accent = AccentBlue
+                        accent = AccentBlue,
+                        onClick = { uriHandler.openUri(link.url.withHttpsPrefix()) },
+                        onLongClick = { tisPendingAction = RepairIndexedTisLink(index, link) }
                     )
                 }
             }
         }
 
-        DocumentationSectionTitle("Pliki i dokumenty")
+        DocumentationSectionHeader(
+            title = "Pliki i dokumenty",
+            onAdd = if (documentation == null) null else ({
+                documentLauncher.launch(
+                    arrayOf(
+                        "application/pdf",
+                        "application/msword",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "text/plain",
+                        "application/octet-stream"
+                    )
+                )
+            })
+        )
         GaragePanel {
             if (files.isEmpty()) {
                 EmptyDocumentationText("Brak plikow i dokumentow.")
             } else {
                 files.forEach { file ->
-                    DocumentationFileRow(file)
-                }
-            }
-        }
-
-        DocumentationSectionTitle("Youtube")
-        GaragePanel {
-            if (videos.isEmpty()) {
-                EmptyDocumentationText("Brak filmow YouTube.")
-            } else {
-                videos.forEach { video ->
-                    DocumentationYoutubeRow(
-                        title = video.title,
-                        subtitle = video.note.ifBlank { "YouTube" }
+                    DocumentationFileRow(
+                        file = file,
+                        onClick = file.uri?.let { uri -> { openDocumentUri(context, uri) } },
+                        onLongClick = { filePendingAction = file }
                     )
                 }
             }
         }
 
-        DocumentationSectionTitle("Zdjecia i filmy")
+        DocumentationSectionHeader(
+            title = "Youtube",
+            onAdd = if (documentation == null) null else ({ isAddingYoutubeLink = true })
+        )
+        GaragePanel {
+            if (videos.isEmpty()) {
+                EmptyDocumentationText("Brak filmow YouTube.")
+            } else {
+                videos.forEachIndexed { index, video ->
+                    DocumentationYoutubeRow(
+                        title = video.title,
+                        subtitle = video.note.ifBlank { "YouTube" },
+                        videoUrl = video.url,
+                        onClick = { uriHandler.openUri(video.url) },
+                        onLongClick = { youtubePendingAction = RepairIndexedYoutubeVideo(index, video) }
+                    )
+                }
+            }
+        }
+
+        DocumentationSectionHeader(
+            title = "Zdjecia i filmy",
+            onAdd = if (documentation == null) null else ({ isChoosingAddType = true })
+        )
         if (media.isEmpty()) {
             GaragePanel {
                 EmptyDocumentationText("Brak zdjec i filmow.")
@@ -943,14 +1896,16 @@ private fun RepairDocumentsTab(
                         DocumentationMediaTile(
                             item = item,
                             extraCount = if (index == 3 && media.size > 4) media.size - 3 else 0,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            onClick = { selectedMediaIndex = index },
+                            onLongClick = { filePendingAction = item }
                         )
                     }
                 }
             }
         }
 
-        GaragePanel(onClick = documentation?.let { doc -> { onOpenDocumentation(doc) } }) {
+        GaragePanel(onClick = if (documentation == null) null else ({ isChoosingAddType = true })) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -968,13 +1923,369 @@ private fun RepairDocumentsTab(
 }
 
 @Composable
-private fun DocumentationSectionTitle(title: String) {
-    Text(
-        text = title,
-        color = MaterialTheme.colorScheme.onBackground,
-        fontSize = 16.sp,
-        fontWeight = FontWeight.Bold
+private fun AddDocumentationItemDialog(
+    onAddTisLink: () -> Unit,
+    onAddDocument: () -> Unit,
+    onAddYoutube: () -> Unit,
+    onAddPhoto: () -> Unit,
+    onAddVideo: () -> Unit,
+    onAddLink: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Dodaj dokumentacje") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                AddDocumentationChoice("Link TIS", "Procedura, schemat albo strona BMW TIS.", onAddTisLink)
+                AddDocumentationChoice("Plik lub dokument", "PDF, DOC, TXT albo inny plik zwiazany z naprawa.", onAddDocument)
+                AddDocumentationChoice("Film YouTube", "Film instruktazowy lub diagnostyczny.", onAddYoutube)
+                AddDocumentationChoice("Zdjecie", "Zdjecie elementu, pomiaru albo przebiegu pracy.", onAddPhoto)
+                AddDocumentationChoice("Film", "Nagranie z telefonu przypisane do naprawy.", onAddVideo)
+                AddDocumentationChoice("Link", "Dowolny link z notatka.", onAddLink)
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
     )
+}
+
+@Composable
+private fun AddDocumentationChoice(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    GaragePanel(onClick = onClick) {
+        Text(title, fontWeight = FontWeight.SemiBold)
+        Text(
+            text = subtitle,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+            fontSize = 13.sp
+        )
+    }
+}
+
+@Composable
+private fun AddRepairTisLinkDialog(
+    initialLink: TisDocumentationLink? = null,
+    onDismiss: () -> Unit,
+    onSave: (TisDocumentationLink) -> Unit,
+) {
+    var title by remember(initialLink) { mutableStateOf(initialLink?.title.orEmpty()) }
+    var link by remember(initialLink) { mutableStateOf(initialLink?.url.orEmpty()) }
+    val normalizedLink = link.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initialLink == null) "Dodaj link TIS" else "Edytuj link TIS") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GarageTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = "Nazwa",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "np. Wymiana zacisku przod"
+                )
+                GarageTextField(
+                    value = link,
+                    onValueChange = { link = it },
+                    label = "Link TIS",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "https://www.newtis.info/..."
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = normalizedLink.isNotBlank(),
+                onClick = {
+                    onSave(
+                        TisDocumentationLink(
+                            title = title.trim().ifBlank { "Link TIS" },
+                            url = normalizedLink.withHttpsPrefix()
+                        )
+                    )
+                }
+            ) {
+                Text(if (initialLink == null) "Dodaj" else "Zapisz")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun AddRepairYoutubeDialog(
+    initialVideo: YoutubeVideo? = null,
+    onDismiss: () -> Unit,
+    onSave: (YoutubeVideo) -> Unit,
+) {
+    var title by remember(initialVideo) { mutableStateOf(initialVideo?.title.orEmpty()) }
+    var link by remember(initialVideo) { mutableStateOf(initialVideo?.url.orEmpty()) }
+    var note by remember(initialVideo) { mutableStateOf(initialVideo?.note.orEmpty()) }
+    val normalizedLink = link.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initialVideo == null) "Dodaj film YouTube" else "Edytuj film YouTube") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GarageTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = "Tytul",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "np. Front brake pads and rotor replacement"
+                )
+                GarageTextField(
+                    value = link,
+                    onValueChange = { link = it },
+                    label = "Link YouTube",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "https://www.youtube.com/watch?v=..."
+                )
+                GarageTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = "Notatka",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Co jest wazne w tym filmie?",
+                    singleLine = false,
+                    minLines = 3
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = normalizedLink.isNotBlank(),
+                onClick = {
+                    val url = normalizedLink.withHttpsPrefix()
+                    onSave(
+                        YoutubeVideo(
+                            title = title.trim().ifBlank { "Film YouTube" },
+                            url = url,
+                            note = note.trim()
+                        )
+                    )
+                }
+            ) {
+                Text(if (initialVideo == null) "Dodaj" else "Zapisz")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun AddRepairPersonalLinkDialog(
+    onDismiss: () -> Unit,
+    onSave: (PersonalDocumentationItem) -> Unit,
+) {
+    var title by remember { mutableStateOf("") }
+    var link by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    val normalizedLink = link.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Dodaj link") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GarageTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = "Nazwa",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "np. Watek na forum"
+                )
+                GarageTextField(
+                    value = link,
+                    onValueChange = { link = it },
+                    label = "Link",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "https://..."
+                )
+                GarageTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = "Notatka",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Dlaczego ten link jest przydatny?",
+                    singleLine = false,
+                    minLines = 3
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = normalizedLink.isNotBlank(),
+                onClick = {
+                    onSave(
+                        PersonalDocumentationItem(
+                            id = "personal-${System.currentTimeMillis()}",
+                            type = PersonalDocumentationItemType.Link,
+                            title = title.trim().ifBlank { "Link" },
+                            text = note.trim(),
+                            url = normalizedLink.withHttpsPrefix()
+                        )
+                    )
+                }
+            ) {
+                Text("Dodaj")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun DocumentationItemActionsDialog(
+    title: String,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GaragePanel(onClick = onEdit) {
+                    Text("Edytuj", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Zmien nazwe, link albo opis tej pozycji.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                        fontSize = 13.sp
+                    )
+                }
+                GaragePanel(onClick = onDelete) {
+                    Text("Usun", fontWeight = FontWeight.SemiBold, color = AccentRed)
+                    Text(
+                        text = "Usuwa pozycje z dokumentacji tej naprawy.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun EditDocumentationFileDialog(
+    item: PersonalDocumentationItem,
+    onDismiss: () -> Unit,
+    onSave: (PersonalDocumentationItem) -> Unit,
+) {
+    var title by remember(item) { mutableStateOf(item.title) }
+    var note by remember(item) { mutableStateOf(item.text) }
+    val canSave = title.trim().isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edytuj pozycje") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GarageTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = "Nazwa",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Nazwa dokumentu"
+                )
+                GarageTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = "Opis",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Rozmiar, zrodlo albo notatka",
+                    singleLine = false,
+                    minLines = 3
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSave,
+                onClick = {
+                    onSave(
+                        item.copy(
+                            title = title.trim(),
+                            text = note.trim()
+                        )
+                    )
+                }
+            ) {
+                Text("Zapisz")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun DocumentationSectionHeader(
+    title: String,
+    onAdd: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold
+        )
+        if (onAdd != null) {
+            Surface(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable(onClick = onAdd),
+                color = AccentBlue.copy(alpha = 0.16f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "+",
+                        color = AccentBlue,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -987,14 +2298,28 @@ private fun EmptyDocumentationText(text: String) {
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun DocumentationLinkRow(
     title: String,
     subtitle: String,
     marker: String,
     accent: androidx.compose.ui.graphics.Color,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null || onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = { onClick?.invoke() },
+                        onLongClick = onLongClick
+                    )
+                } else {
+                    Modifier
+                }
+            ),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1029,12 +2354,36 @@ private fun DocumentationLinkRow(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun DocumentationYoutubeRow(
     title: String,
     subtitle: String,
+    videoUrl: String = "",
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val videoId = remember(videoUrl) { videoUrl.youtubeVideoId() }
+    val thumbnailUrl = remember(videoId) {
+        videoId?.let { "https://img.youtube.com/vi/$it/hqdefault.jpg" }
+    }
+    val titleSize = when {
+        title.length > 72 -> 14.sp
+        title.length > 46 -> 15.sp
+        else -> 16.sp
+    }
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null || onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = { onClick?.invoke() },
+                        onLongClick = onLongClick
+                    )
+                } else {
+                    Modifier
+                }
+            ),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1050,12 +2399,13 @@ private fun DocumentationYoutubeRow(
                 ),
             contentAlignment = Alignment.Center
         ) {
+            YoutubeThumbnail(thumbnailUrl = thumbnailUrl, modifier = Modifier.fillMaxSize())
             Surface(
                 color = AccentRed.copy(alpha = 0.92f),
                 shape = RoundedCornerShape(6.dp)
             ) {
                 Text(
-                    text = "▶",
+                    text = ">",
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
                     color = Color.White,
                     fontSize = 13.sp,
@@ -1067,7 +2417,14 @@ private fun DocumentationYoutubeRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            Text(title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Text(
+                text = title,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = titleSize,
+                lineHeight = (titleSize.value + 4).sp,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis
+            )
             Text(
                 subtitle,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
@@ -1085,9 +2442,57 @@ private fun DocumentationYoutubeRow(
 }
 
 @Composable
-private fun DocumentationFileRow(file: PersonalDocumentationItem) {
+private fun YoutubeThumbnail(
+    thumbnailUrl: String?,
+    modifier: Modifier = Modifier,
+) {
+    val bitmap by produceState<Bitmap?>(initialValue = null, thumbnailUrl) {
+        value = thumbnailUrl?.let { loadBitmapFromUrl(it) }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "Miniatura YouTube",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Text(
+                text = "YT",
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalFoundationApi::class)
+private fun DocumentationFileRow(
+    file: PersonalDocumentationItem,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null || onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = { onClick?.invoke() },
+                        onLongClick = onLongClick
+                    )
+                } else {
+                    Modifier
+                }
+            ),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1097,14 +2502,14 @@ private fun DocumentationFileRow(file: PersonalDocumentationItem) {
             shape = RoundedCornerShape(6.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text("PDF", color = AccentRed, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Text(file.documentBadge(), color = AccentRed, fontSize = 9.sp, fontWeight = FontWeight.Bold)
             }
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Text(file.title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(file.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
             Text(
                 file.text.ifBlank { "Dokument" },
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
@@ -1112,19 +2517,40 @@ private fun DocumentationFileRow(file: PersonalDocumentationItem) {
                 maxLines = 1
             )
         }
-        Text("↓", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f), fontSize = 22.sp)
+        Text("↗", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f), fontSize = 22.sp)
     }
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun DocumentationMediaTile(
     item: PersonalDocumentationItem,
     extraCount: Int,
     modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(initialValue = null, item.uri, item.type) {
+        value = when (item.type) {
+            PersonalDocumentationItemType.Photo -> item.uri?.let {
+                withContext(Dispatchers.IO) { loadBitmapFromUri(context, Uri.parse(it)) }
+            }
+            PersonalDocumentationItemType.Video -> item.uri?.let {
+                loadVideoThumbnail(context, Uri.parse(it))
+            }
+            else -> null
+        }
+    }
+
     Box(
         modifier = modifier
             .height(82.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .background(
                 Brush.linearGradient(
                     listOf(Color(0xFF2B3C46), Color(0xFF0E1821))
@@ -1133,6 +2559,14 @@ private fun DocumentationMediaTile(
             ),
         contentAlignment = Alignment.Center
     ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = item.title,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
         if (extraCount > 0) {
             Box(
                 modifier = Modifier
@@ -1147,13 +2581,27 @@ private fun DocumentationMediaTile(
                     fontWeight = FontWeight.Bold
                 )
             }
-        } else {
+        } else if (item.type == PersonalDocumentationItemType.Video && bitmap != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                shape = CircleShape
+            ) {
+                Text(
+                    text = ">",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else if (bitmap == null) {
             Text(
                 text = if (item.type == PersonalDocumentationItemType.Video) "FILM" else "IMG",
                 color = AccentBlue,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
+        } else {
+            Unit
         }
     }
 }
@@ -1504,6 +2952,408 @@ private fun loadBitmapFromUri(context: android.content.Context, uri: Uri): Bitma
     }.getOrNull()
 
 @Composable
+private fun PersonalMediaGalleryDialog(
+    media: List<PersonalDocumentationItem>,
+    initialIndex: Int,
+    onDismiss: () -> Unit,
+    onOpen: (PersonalDocumentationItem) -> Unit,
+    onEdit: (PersonalDocumentationItem) -> Unit,
+    onDelete: (PersonalDocumentationItem) -> Unit,
+) {
+    BackHandler(onBack = onDismiss)
+    val galleryScope = rememberCoroutineScope()
+    val pagerState = rememberPagerState(
+        initialPage = initialIndex.coerceIn(0, (media.size - 1).coerceAtLeast(0)),
+        pageCount = { media.size }
+    )
+    var currentScale by remember { mutableStateOf(1f) }
+    val item = media.getOrNull(pagerState.currentPage) ?: return
+    LaunchedEffect(pagerState.currentPage) {
+        currentScale = 1f
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color.Black
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                    userScrollEnabled = currentScale <= 1.01f
+                ) { page ->
+                    media.getOrNull(page)?.let { pageItem ->
+                        ZoomableGalleryMedia(
+                            item = pageItem,
+                            isActive = page == pagerState.currentPage,
+                            onScaleChanged = { scale -> currentScale = scale }
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .background(Color.Black.copy(alpha = 0.54f))
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("<", color = Color.White, fontSize = 24.sp)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.title,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${pagerState.currentPage + 1}/${media.size}",
+                            color = Color.White.copy(alpha = 0.68f),
+                            fontSize = 12.sp
+                        )
+                    }
+                    TextButton(onClick = { onEdit(item) }) {
+                        Text("Edytuj", color = Color.White)
+                    }
+                    TextButton(onClick = { onDelete(item) }) {
+                        Text("Usun", color = AccentRed)
+                    }
+                }
+
+                if (media.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.Center)
+                            .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            enabled = pagerState.currentPage > 0,
+                            onClick = {
+                                galleryScope.launch {
+                                    currentScale = 1f
+                                    pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                }
+                            }
+                        ) {
+                            Text("<", color = Color.White, fontSize = 34.sp)
+                        }
+                        TextButton(
+                            enabled = pagerState.currentPage < media.lastIndex,
+                            onClick = {
+                                galleryScope.launch {
+                                    currentScale = 1f
+                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                }
+                            }
+                        ) {
+                            Text(">", color = Color.White, fontSize = 34.sp)
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .background(Color.Black.copy(alpha = 0.54f))
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (currentScale > 1f) "Przesun palcem. Podwojne tapniecie resetuje zoom." else "Przesun palcem, aby zmienic zdjecie. Uszczypniecie powieksza w miejscu palcow.",
+                        modifier = Modifier.weight(1f),
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp,
+                        maxLines = 2
+                    )
+                    TextButton(onClick = { onOpen(item) }) {
+                        Text("Otworz", color = Color.White)
+                    }
+                }
+                if (item.text.isNotBlank()) {
+                    Text(
+                        text = item.text,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(start = 16.dp, end = 110.dp, bottom = 58.dp),
+                        color = Color.White.copy(alpha = 0.68f),
+                        fontSize = 12.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ZoomableGalleryMedia(
+    item: PersonalDocumentationItem,
+    isActive: Boolean,
+    onScaleChanged: (Float) -> Unit,
+) {
+    val context = LocalContext.current
+    var scale by remember(item.id) { mutableStateOf(1f) }
+    var offset by remember(item.id) { mutableStateOf(Offset.Zero) }
+    var viewportSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val bitmap by produceState<Bitmap?>(initialValue = null, item.uri, item.type) {
+        value = when (item.type) {
+            PersonalDocumentationItemType.Photo -> item.uri?.let {
+                withContext(Dispatchers.IO) { loadBitmapFromUri(context, Uri.parse(it)) }
+            }
+            PersonalDocumentationItemType.Video -> item.uri?.let {
+                loadVideoThumbnail(context, Uri.parse(it))
+            }
+            else -> null
+        }
+    }
+
+    fun clampOffset(value: Offset, targetScale: Float): Offset {
+        if (viewportSize.width <= 0 || viewportSize.height <= 0 || targetScale <= 1f) return Offset.Zero
+        if (!value.x.isFinite() || !value.y.isFinite()) return Offset.Zero
+        val maxX = (viewportSize.width * (targetScale - 1f) / 2f).coerceAtLeast(0f)
+        val maxY = (viewportSize.height * (targetScale - 1f) / 2f).coerceAtLeast(0f)
+        return Offset(
+            x = value.x.coerceIn(-maxX, maxX),
+            y = value.y.coerceIn(-maxY, maxY)
+        )
+    }
+
+    fun updateTransform(nextScale: Float, nextOffset: Offset) {
+        scale = if (nextScale.isFinite()) nextScale.coerceIn(1f, 5f) else 1f
+        offset = clampOffset(nextOffset, scale)
+        if (isActive) onScaleChanged(scale)
+    }
+
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            scale = 1f
+            offset = Offset.Zero
+        } else {
+            onScaleChanged(scale)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { viewportSize = it }
+            .pointerInput(item.id) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressedCount = event.changes.count { it.pressed }
+                        val zoom = event.calculateZoom()
+                        val pan = event.calculatePan()
+                        val centroid = event.calculateCentroid(useCurrent = true)
+
+                        if (pressedCount > 0 && (pressedCount > 1 || scale > 1.01f)) {
+                            val oldScale = scale
+                            val nextScale = (scale * zoom).coerceIn(1f, 5f)
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val focalPoint = centroid - center
+                            val scaleFactor = nextScale / oldScale
+                            val zoomOffset = if (nextScale > 1f) {
+                                offset * scaleFactor + focalPoint * (1f - scaleFactor)
+                            } else {
+                                Offset.Zero
+                            }
+                            updateTransform(
+                                nextScale = nextScale,
+                                nextOffset = if (nextScale > 1f) zoomOffset + pan else Offset.Zero
+                            )
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            }
+            .pointerInput(item.id) {
+                detectTapGestures(
+                    onDoubleTap = { tapOffset ->
+                        if (scale > 1f) {
+                            updateTransform(1f, Offset.Zero)
+                        } else {
+                            val targetScale = 2.6f
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            updateTransform(
+                                nextScale = targetScale,
+                                nextOffset = (center - tapOffset) * (targetScale - 1f)
+                            )
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = item.title,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    },
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            Text(
+                text = item.type.defaultDocumentationTitle(),
+                color = AccentBlue,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+private suspend fun loadBitmapFromUrl(url: String): Bitmap? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            URL(url).openStream().use(BitmapFactory::decodeStream)
+        }.getOrNull()
+    }
+
+private suspend fun loadVideoThumbnail(context: Context, uri: Uri): Bitmap? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            MediaMetadataRetriever().use { retriever ->
+                retriever.setDataSource(context, uri)
+                retriever.frameAtTime
+            }
+        }.getOrNull()
+    }
+
+private fun String.youtubeVideoId(): String? {
+    val normalized = trim()
+    val patterns = listOf(
+        Regex("[?&]v=([A-Za-z0-9_-]{11})"),
+        Regex("youtu\\.be/([A-Za-z0-9_-]{11})"),
+        Regex("youtube\\.com/embed/([A-Za-z0-9_-]{11})"),
+        Regex("youtube\\.com/shorts/([A-Za-z0-9_-]{11})")
+    )
+    return patterns.firstNotNullOfOrNull { pattern ->
+        pattern.find(normalized)?.groupValues?.getOrNull(1)
+    }
+}
+
+private fun Context.displayNameForUri(uri: Uri): String? =
+    runCatching {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst() && nameIndex >= 0) {
+                    cursor.getString(nameIndex)
+                } else {
+                    null
+                }
+            }
+    }.getOrNull()
+
+private fun Context.sizeLabelForUri(uri: Uri): String? =
+    runCatching {
+        contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (cursor.moveToFirst() && sizeIndex >= 0) {
+                    cursor.getLong(sizeIndex).takeIf { it > 0 }?.toFileSizeLabel()
+                } else {
+                    null
+                }
+            }
+    }.getOrNull()
+
+private fun Long.toFileSizeLabel(): String =
+    if (this >= 1024L * 1024L) {
+        "${this / (1024L * 1024L)} MB"
+    } else {
+        "${(this / 1024L).coerceAtLeast(1)} KB"
+    }
+
+private fun persistReadPermission(context: Context, uri: Uri) {
+    runCatching {
+        context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+}
+
+private fun openDocumentUri(context: Context, rawUri: String) {
+    val uri = Uri.parse(rawUri)
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setData(uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(intent)
+    }
+}
+
+private fun PersonalDocumentationItem.documentBadge(): String =
+    title.substringAfterLast('.', "")
+        .take(3)
+        .uppercase()
+        .ifBlank {
+            when (type) {
+                PersonalDocumentationItemType.Document -> "DOC"
+                PersonalDocumentationItemType.File -> "PLK"
+                else -> "PDF"
+            }
+        }
+
+private fun RepairDocumentation.effectiveTisDocuments(): List<TisDocumentationLink> =
+    tisDocuments.ifEmpty {
+        tisLinks.map { url ->
+            TisDocumentationLink(
+                title = url,
+                url = url
+            )
+        }
+    }
+
+private fun RepairDocumentation.effectiveYoutubeVideos(): List<YoutubeVideo> =
+    youtubeVideos.ifEmpty {
+        youtubeLinks.map { url ->
+            YoutubeVideo(
+                title = "Film YouTube",
+                url = url
+            )
+        }
+    }
+
+private fun String.withHttpsPrefix(): String =
+    trim().let { value ->
+        if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("content://")) {
+            value
+        } else {
+            "https://$value"
+        }
+    }
+
+private fun PersonalDocumentationItemType.defaultDocumentationTitle(): String = when (this) {
+    PersonalDocumentationItemType.Photo -> "Zdjecie"
+    PersonalDocumentationItemType.Video -> "Film"
+    PersonalDocumentationItemType.Document -> "Dokument"
+    PersonalDocumentationItemType.File -> "Plik"
+    PersonalDocumentationItemType.Link -> "Link"
+    PersonalDocumentationItemType.Text -> "Notatka"
+}
+
+@Composable
 private fun RepairNotesTab(documentation: RepairDocumentation?) {
     val notes = documentation?.personalNotes.orEmpty()
     GaragePanel {
@@ -1528,11 +3378,41 @@ private fun String.normalizedRepairStatus(): String = when {
     else -> this
 }
 
+private fun String.isFinishedRepairStatus(): Boolean =
+    lowercase().contains("zakon")
+
 private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
     repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
 
 private fun PartInventoryItem.belongsToRepair(repair: RepairProject): Boolean =
     repairId == repair.id || (repairId.isNullOrBlank() && repairTitle == repair.title)
+
+private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
+
+private fun List<ShoppingListItem>.afterReceiving(
+    receivedItem: ShoppingListItem,
+    receivedQuantity: Int,
+): List<ShoppingListItem> =
+    mapNotNull { item ->
+        if (item.stableId() != receivedItem.stableId()) {
+            item
+        } else {
+            val remainingQuantity = item.quantity - receivedQuantity
+            if (remainingQuantity > 0) item.copy(quantity = remainingQuantity) else null
+        }
+    }
+
+private fun nextInventoryId(parts: List<PartInventoryItem>): String =
+    "repair-part-${System.currentTimeMillis()}-${parts.size}"
+
+private fun PartInventoryItem.matchesShoppingItem(item: ShoppingListItem): Boolean {
+    val inventoryNumbers = listOf(oemPartNumber, manufacturerPartNumber).filter { it.isNotBlank() }
+    val shoppingNumbers = listOf(item.partNumber, item.manufacturerPartNumber).filter { it.isNotBlank() }
+    return inventoryNumbers.any { inventoryNumber ->
+        shoppingNumbers.any { shoppingNumber -> inventoryNumber == shoppingNumber }
+    } || name.equals(item.name, ignoreCase = true)
+}
 
 private fun RepairProject.effectiveCheckpoints(): List<RepairCheckpoint> =
     checkpoints.ifEmpty {
@@ -1631,6 +3511,16 @@ private data class RealOemDiagramDetails(
     val parts: List<RealOemPart>,
 )
 
+private data class RepairIndexedTisLink(
+    val index: Int,
+    val link: TisDocumentationLink,
+)
+
+private data class RepairIndexedYoutubeVideo(
+    val index: Int,
+    val video: YoutubeVideo,
+)
+
 @Composable
 private fun RealOemSchematicsDialog(
     vehicle: Vehicle,
@@ -1643,11 +3533,11 @@ private fun RealOemSchematicsDialog(
     var selectedDiagram by remember { mutableStateOf<RealOemDiagram?>(null) }
     var diagramDetails by remember { mutableStateOf<RealOemDiagramDetails?>(null) }
     var selectedPartNumbers by remember { mutableStateOf(setOf<String>()) }
+    var partPendingLookup by remember { mutableStateOf<RealOemPart?>(null) }
     var isLoadingDiagrams by remember { mutableStateOf(false) }
     var isLoadingParts by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var diagramSearchQuery by remember { mutableStateOf("") }
-    var enlargedImageUrl by remember { mutableStateOf<String?>(null) }
     val filteredDiagrams = remember(diagrams, diagramSearchQuery) {
         val query = diagramSearchQuery.catalogKey()
         if (query.isBlank()) {
@@ -1658,13 +3548,6 @@ private fun RealOemSchematicsDialog(
                     diagram.groupLabel.catalogKey().contains(query)
             }
         }
-    }
-
-    enlargedImageUrl?.let { imageUrl ->
-        EnlargedDiagramDialog(
-            imageUrl = imageUrl,
-            onDismiss = { enlargedImageUrl = null }
-        )
     }
 
     fun loadDiagrams() {
@@ -1688,7 +3571,6 @@ private fun RealOemSchematicsDialog(
             selectedDiagram = diagram
             diagramDetails = null
             selectedPartNumbers = emptySet()
-            enlargedImageUrl = null
             isLoadingParts = true
             message = null
             diagramDetails = runCatching {
@@ -1700,56 +3582,74 @@ private fun RealOemSchematicsDialog(
         }
     }
 
-    fun addSelectedPartsToShoppingList() {
-        val details = diagramDetails ?: return
+    LaunchedEffect(vehicle.id, vehicle.vin, repair.area) {
+        loadDiagrams()
+    }
+
+    fun addLookupPartToShoppingList(
+        schemePart: RealOemPart,
+        lookup: MockPartLookupResult,
+        quantity: Int,
+    ) {
         val diagram = selectedDiagram ?: return
-        val items = details.parts
-            .filter { it.partNumber in selectedPartNumbers }
-            .mapIndexed { index, part ->
+        onAddShoppingItems(
+            listOf(
                 ShoppingListItem(
-                    id = "czescidobmw-${part.partNumber}-${System.currentTimeMillis()}-$index",
-                    partNumber = part.partNumber,
-                    manufacturerPartNumber = part.partNumber,
-                    name = translateRealOemLabel(part.name),
-                    manufacturer = "BMW / OEM",
+                    id = "czescidobmw-${lookup.manufacturerPartNumber}-${System.currentTimeMillis()}",
+                    partNumber = lookup.oemPartNumber,
+                    manufacturerPartNumber = lookup.manufacturerPartNumber,
+                    name = lookup.name,
+                    manufacturer = lookup.manufacturer,
                     repairTitle = repair.title,
                     repairId = repair.id,
                     area = repair.area,
-                    quantity = part.quantity.toIntOrNull() ?: 1,
+                    quantity = quantity,
                     source = "czescidobmw.pl",
-                    shopUrl = diagram.url,
-                    realOemUrl = diagram.url
+                    price = lookup.shopPrice,
+                    imageUri = lookup.imageUrl,
+                    shopUrl = lookup.shopUrl,
+                    realOemUrl = lookup.realOemUrl.ifBlank { diagram.url }
                 )
-            }
-        onAddShoppingItems(items)
-        onDismiss()
+            )
+        )
+        selectedPartNumbers = selectedPartNumbers + schemePart.partNumber
+        partPendingLookup = null
+    }
+
+    partPendingLookup?.let { part ->
+        RealOemPartLookupDialog(
+            part = part,
+            onAddToShoppingList = { lookup, quantity ->
+                addLookupPartToShoppingList(part, lookup, quantity)
+            },
+            onDismiss = { partPendingLookup = null }
+        )
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                if (selectedDiagram == null) {
+                text = if (selectedDiagram == null) {
                     "Schematy czescidobmw.pl"
                 } else {
                     translateRealOemLabel(diagramDetails?.title ?: selectedDiagram?.title.orEmpty())
-                }
+                },
+                fontSize = if (selectedDiagram == null) 22.sp else 18.sp,
+                lineHeight = if (selectedDiagram == null) 28.sp else 22.sp
             )
         },
         text = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (selectedDiagram == null) {
                     Text(
                         text = "${repair.area.label} / ${vehicle.displayName.ifBlank { "BMW" }}",
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
                     )
-                    TextButton(
-                        enabled = !isLoadingDiagrams,
-                        onClick = { loadDiagrams() }
-                    ) {
-                        Text(if (isLoadingDiagrams) "Pobieram schematy..." else "Pobierz schematy")
+                    if (isLoadingDiagrams) {
+                        RealOemInfoRow("Pobieram schematy...")
                     }
                     message?.let { text ->
                         RealOemInfoRow(text)
@@ -1784,16 +3684,18 @@ private fun RealOemSchematicsDialog(
                         }
                     }
                 } else {
-                    TextButton(
-                        onClick = {
+                    Text(
+                        text = "‹ Wroc do schematow",
+                        modifier = Modifier.clickable {
                             selectedDiagram = null
                             diagramDetails = null
                             selectedPartNumbers = emptySet()
                             message = null
-                        }
-                    ) {
-                        Text("Wroc do schematow")
-                    }
+                        },
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     message?.let { text ->
                         RealOemInfoRow(text)
                     }
@@ -1804,7 +3706,7 @@ private fun RealOemSchematicsDialog(
                         details.imageUrl?.let { imageUrl ->
                             RealOemDiagramImage(
                                 imageUrl = imageUrl,
-                                onClick = { enlargedImageUrl = imageUrl }
+                                maxImageHeight = 300
                             )
                         } ?: RealOemInfoRow("Nie znaleziono obrazu dla tego schematu.")
                         Text(
@@ -1815,20 +3717,14 @@ private fun RealOemSchematicsDialog(
                             RealOemInfoRow("Nie znaleziono listy czesci na tym schemacie.")
                         } else {
                             LazyColumn(
-                                modifier = Modifier.heightIn(max = 360.dp),
+                                modifier = Modifier.heightIn(max = 430.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 items(details.parts) { part ->
                                     RealOemPartRow(
                                         part = part,
                                         isSelected = part.partNumber in selectedPartNumbers,
-                                        onToggle = {
-                                            selectedPartNumbers = if (part.partNumber in selectedPartNumbers) {
-                                                selectedPartNumbers - part.partNumber
-                                            } else {
-                                                selectedPartNumbers + part.partNumber
-                                            }
-                                        }
+                                        onClick = { partPendingLookup = part }
                                     )
                                 }
                             }
@@ -1838,12 +3734,6 @@ private fun RealOemSchematicsDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = diagramDetails?.parts.orEmpty().any { it.partNumber in selectedPartNumbers },
-                onClick = { addSelectedPartsToShoppingList() }
-            ) {
-                Text("Dodaj zaznaczone")
-            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
@@ -1943,12 +3833,12 @@ private fun RealOemDiagramThumbnail(diagram: RealOemDiagram) {
 private fun RealOemPartRow(
     part: RealOemPart,
     isSelected: Boolean,
-    onToggle: () -> Unit,
+    onClick: () -> Unit,
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle),
+            .clickable(onClick = onClick),
         color = if (isSelected) {
             MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
         } else {
@@ -1958,49 +3848,187 @@ private fun RealOemPartRow(
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top
         ) {
             Text(
                 text = part.position.ifBlank { "-" },
-                modifier = Modifier.width(34.dp),
+                modifier = Modifier.width(30.dp),
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold
             )
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 Text(
                     text = translateRealOemLabel(part.name),
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 20.sp
                 )
                 if (translateRealOemLabel(part.name) != part.name) {
                     Text(
                         text = part.name,
                         fontSize = 12.sp,
+                        lineHeight = 16.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f)
                     )
                 }
                 Text(
                     text = "Ilosc: ${part.quantity.ifBlank { "1" }} / OEM: ${part.partNumber}",
                     fontSize = 12.sp,
+                    lineHeight = 16.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
                 )
                 if (part.notes.isNotBlank()) {
                     Text(
                         text = part.notes,
                         fontSize = 12.sp,
+                        lineHeight = 16.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f)
                     )
                 }
             }
-            Text(
-                text = if (isSelected) "Wybrane" else "Wybierz",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Medium
-            )
+            Surface(
+                modifier = Modifier.size(38.dp),
+                color = if (isSelected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                } else {
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)
+                },
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = if (isSelected) "✓" else "▤",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     }
 }
+
+@Composable
+private fun RealOemPartLookupDialog(
+    part: RealOemPart,
+    onAddToShoppingList: (MockPartLookupResult, Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var quantity by remember(part.partNumber) {
+        mutableStateOf(part.quantity.defaultQuantityText())
+    }
+    var lookupResults by remember(part.partNumber) { mutableStateOf(emptyList<MockPartLookupResult>()) }
+    var selectedResult by remember(part.partNumber) { mutableStateOf<MockPartLookupResult?>(null) }
+    var isSearching by remember(part.partNumber) { mutableStateOf(false) }
+    var searchError by remember(part.partNumber) { mutableStateOf<String?>(null) }
+    val quantityValue = quantity.toIntOrNull()
+    val canAdd = selectedResult != null && quantityValue != null && quantityValue > 0
+
+    fun searchOffers() {
+        coroutineScope.launch {
+            isSearching = true
+            searchError = null
+            selectedResult = null
+            lookupResults = runCatching {
+                fetchCzescidobmwResults(part.partNumber)
+            }.recoverCatching {
+                listOf(mockPartLookup(part.partNumber))
+            }.getOrDefault(emptyList())
+            if (lookupResults.isEmpty()) {
+                searchError = "Nie znaleziono dostepnych czesci dla OEM ${part.partNumber}."
+            }
+            isSearching = false
+        }
+    }
+
+    LaunchedEffect(part.partNumber) {
+        searchOffers()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = translateRealOemLabel(part.name),
+                fontSize = 18.sp,
+                lineHeight = 22.sp
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "OEM: ${part.partNumber} / ilosc ze schematu: ${part.quantity.ifBlank { "1" }}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                    fontSize = 13.sp
+                )
+                GarageTextField(
+                    value = quantity,
+                    onValueChange = { quantity = it.filter { character -> character.isDigit() } },
+                    label = "Ilosc do listy zakupow",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = part.quantity.ifBlank { "1" },
+                    keyboardType = KeyboardType.Number
+                )
+                if (isSearching) {
+                    RealOemInfoRow("Szukam dostepnych czesci w sklepie...")
+                }
+                searchError?.let { error ->
+                    RealOemInfoRow(error)
+                }
+                if (!isSearching && lookupResults.isEmpty() && searchError == null) {
+                    RealOemInfoRow("Wyniki pojawia sie po pobraniu danych sklepu.")
+                }
+                lookupResults.forEach { lookup ->
+                    LookupResultCard(
+                        title = lookup.manufacturer,
+                        subtitle = lookup.name,
+                        primary = "Cena brutto: ${lookup.shopPrice}",
+                        secondary = "OEM: ${lookup.oemPartNumber} / Producent: ${lookup.manufacturerPartNumber}",
+                        source = lookup.shopUrl,
+                        imageUrl = lookup.imageUrl,
+                        imageSearchUrl = lookup.imageSearchUrl,
+                        isSelected = selectedResult == lookup,
+                        onClick = { selectedResult = lookup }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canAdd,
+                onClick = {
+                    val lookup = selectedResult ?: return@TextButton
+                    onAddToShoppingList(lookup, quantityValue ?: 1)
+                }
+            ) {
+                Text("Dodaj do zakupow")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    enabled = !isSearching,
+                    onClick = { searchOffers() }
+                ) {
+                    Text("Odswiez")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Anuluj")
+                }
+            }
+        }
+    )
+}
+
+private fun String.defaultQuantityText(): String =
+    Regex("\\d+").find(this)?.value ?: "1"
 
 @Composable
 private fun RealOemInfoRow(text: String) {
@@ -2020,9 +4048,7 @@ private fun RealOemInfoRow(text: String) {
 @Composable
 private fun RealOemDiagramImage(
     imageUrl: String,
-    onClick: () -> Unit,
-    imageHeight: Int = 260,
-    showHint: Boolean = true,
+    maxImageHeight: Int = 300,
 ) {
     val bitmap by produceState<Bitmap?>(initialValue = null, imageUrl) {
         value = withContext(Dispatchers.IO) {
@@ -2033,51 +4059,50 @@ private fun RealOemDiagramImage(
             }.getOrNull()
         }
     }
+    var scale by remember(imageUrl) { mutableStateOf(1f) }
+    var offset by remember(imageUrl) { mutableStateOf(Offset.Zero) }
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        val updatedScale = (scale * zoomChange).coerceIn(1f, 4f)
+        scale = updatedScale
+        offset = if (updatedScale > 1f) {
+            Offset(
+                x = (offset.x + panChange.x).coerceIn(-360f, 360f),
+                y = (offset.y + panChange.y).coerceIn(-360f, 360f)
+            )
+        } else {
+            Offset.Zero
+        }
+    }
 
     if (bitmap != null) {
-        Image(
-            bitmap = bitmap!!.asImageBitmap(),
-            contentDescription = "Schemat czescidobmw.pl",
+        val aspectRatio = bitmap!!.width.toFloat() / bitmap!!.height.toFloat()
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(imageHeight.dp)
-                .clickable(onClick = onClick),
-            contentScale = ContentScale.Fit
-        )
-        if (showHint) {
-            Text(
-                text = "Kliknij schemat, aby powiekszyc",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.primary
+                .heightIn(max = maxImageHeight.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color.White)
+                .transformable(transformState),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "Schemat czescidobmw.pl",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(aspectRatio)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    },
+                contentScale = ContentScale.Fit
             )
         }
     } else {
         RealOemInfoRow("Schemat graficzny bedzie widoczny po pobraniu obrazu.")
     }
-}
-
-@Composable
-private fun EnlargedDiagramDialog(
-    imageUrl: String,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Podglad schematu") },
-        text = {
-            RealOemDiagramImage(
-                imageUrl = imageUrl,
-                onClick = {},
-                imageHeight = 520,
-                showHint = false
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Zamknij")
-            }
-        }
-    )
 }
 
 private suspend fun fetchRealOemDiagrams(
@@ -2499,11 +4524,15 @@ private fun VehicleRepairListScreenPreview() {
             repairs = sampleRepairsFor(vehicle),
             repairDocumentation = emptyList(),
             inventoryParts = emptyList(),
+            shoppingList = emptyList(),
             onRepairAdded = { _, _ -> },
             onRepairUpdated = {},
             onOpenDocumentation = {},
+            onDocumentationUpdated = {},
             onOpenShoppingList = {},
             onAddShoppingItems = {},
+            onShoppingListUpdated = {},
+            onInventoryPartAdded = {},
             onBack = {}
         )
     }

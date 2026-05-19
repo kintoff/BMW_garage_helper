@@ -70,6 +70,8 @@ import pl.garage.bmwassistant.data.sampleRepairDocumentationFor
 import pl.garage.bmwassistant.model.PersonalDocumentationItem
 import pl.garage.bmwassistant.model.PersonalDocumentationItemType
 import pl.garage.bmwassistant.model.RepairDocumentation
+import pl.garage.bmwassistant.model.RepairProject
+import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.TisDocumentationLink
 import pl.garage.bmwassistant.model.TorqueDiagramAssignment
 import pl.garage.bmwassistant.model.TorqueSpec
@@ -77,8 +79,11 @@ import pl.garage.bmwassistant.model.TorqueSpecTable
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.model.YoutubeVideo
+import pl.garage.bmwassistant.ui.components.AccentBlue
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
+import pl.garage.bmwassistant.ui.components.SegmentTabs
+import pl.garage.bmwassistant.ui.components.StatusBadge
 import pl.garage.bmwassistant.ui.components.iconResource
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 import com.google.mlkit.vision.common.InputImage
@@ -100,6 +105,8 @@ import java.util.zip.ZipOutputStream
 fun VehicleDocumentationScreen(
     vehicle: Vehicle,
     repairDocumentation: List<RepairDocumentation>,
+    repairProjects: List<RepairProject> = emptyList(),
+    shoppingList: List<ShoppingListItem> = emptyList(),
     initialRepairTitle: String? = null,
     returnToPreviousModuleOnBack: Boolean = false,
     onDocumentationUpdated: (RepairDocumentation) -> Unit,
@@ -114,13 +121,25 @@ fun VehicleDocumentationScreen(
             }
         )
     }
-    var expandedRepairAreas by remember(repairDocumentation) {
+    val finishedRepairProjects = remember(repairProjects) {
+        repairProjects.filter { it.status.isFinishedRepairStatus() }
+    }
+    val archivedRepairDocumentation = remember(repairDocumentation, finishedRepairProjects) {
+        if (repairProjects.isEmpty()) {
+            repairDocumentation
+        } else {
+            repairDocumentation.filter { documentation ->
+                finishedRepairProjects.any { repair -> documentation.belongsToRepair(repair) }
+            }
+        }
+    }
+    var expandedRepairAreas by remember(archivedRepairDocumentation) {
         mutableStateOf(
-            repairDocumentation.map { it.area }.toSet().ifEmpty { setOf(VehicleArea.Engine) }
+            archivedRepairDocumentation.map { it.area }.toSet().ifEmpty { setOf(VehicleArea.Engine) }
         )
     }
-    val documentationByArea = remember(repairDocumentation) {
-        repairDocumentation.groupBy { it.area }
+    val documentationByArea = remember(archivedRepairDocumentation) {
+        archivedRepairDocumentation.groupBy { it.area }
     }
 
     fun closeDocumentationDetails() {
@@ -136,9 +155,14 @@ fun VehicleDocumentationScreen(
     }
 
     selectedDocumentation?.let { documentation ->
+        val repair = repairProjects.firstOrNull { documentation.belongsToRepair(it) }
         RepairDocumentationDetailsScreen(
             vehicle = vehicle,
             documentation = documentation,
+            repair = repair,
+            archivedShoppingList = documentation.archivedShoppingList.ifEmpty {
+                shoppingList.filter { item -> repair != null && item.belongsToRepair(repair) }
+            },
             onDocumentationUpdated = { updatedDocumentation ->
                 selectedDocumentation = updatedDocumentation
                 onDocumentationUpdated(updatedDocumentation)
@@ -185,19 +209,20 @@ fun VehicleDocumentationScreen(
             item {
                 DocumentationSection(
                     title = "Dokumentacja do napraw",
-                    subtitle = "Automatyczne foldery powiazane z naprawami. Zostaja w historii nawet po zamknieciu naprawy.",
-                    countLabel = "${repairDocumentation.size} wpisow",
+                    subtitle = "Archiwum zakonczonych napraw. Zawiera opis, dokumenty i nieaktywna historie zakupow.",
+                    countLabel = "${archivedRepairDocumentation.size} wpisow",
                     isExpanded = isRepairDocsExpanded,
                     onToggle = { isRepairDocsExpanded = !isRepairDocsExpanded }
                 ) {
-                    if (repairDocumentation.isEmpty()) {
-                        EmptyDocumentationRow("Brak dokumentacji powiazanej z naprawami.")
+                    if (archivedRepairDocumentation.isEmpty()) {
+                        EmptyDocumentationRow("Brak zakonczonych napraw w archiwum dokumentacji.")
                     } else {
                         VehicleArea.entries.forEach { area ->
                             val areaDocumentation = documentationByArea[area].orEmpty()
                             RepairDocumentationAreaGroup(
                                 area = area,
                                 documentation = areaDocumentation,
+                                repairProjects = finishedRepairProjects,
                                 isExpanded = area in expandedRepairAreas,
                                 onDocumentationClick = { documentation ->
                                     selectedDocumentation = documentation
@@ -284,6 +309,7 @@ private fun DocumentationSection(
 private fun RepairDocumentationAreaGroup(
     area: VehicleArea,
     documentation: List<RepairDocumentation>,
+    repairProjects: List<RepairProject>,
     isExpanded: Boolean,
     onDocumentationClick: (RepairDocumentation) -> Unit,
     onToggle: () -> Unit,
@@ -341,6 +367,7 @@ private fun RepairDocumentationAreaGroup(
                         .forEach { item ->
                             RepairDocumentationRow(
                                 documentation = item,
+                                repair = repairProjects.firstOrNull { repair -> item.belongsToRepair(repair) },
                                 onClick = { onDocumentationClick(item) }
                             )
                         }
@@ -368,6 +395,7 @@ private fun EmptyDocumentationRow(text: String) {
 @Composable
 private fun RepairDocumentationRow(
     documentation: RepairDocumentation,
+    repair: RepairProject?,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -394,16 +422,19 @@ private fun RepairDocumentationRow(
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Text(
-                    text = documentation.title,
+                    text = repair?.title ?: documentation.repairTitle,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Powiazana naprawa: ${documentation.repairTitle}",
+                    text = "Dokumentacja: ${documentation.title}",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium
                 )
+                repair?.let {
+                    StatusBadge(it.status.normalizedRepairStatusLabel())
+                }
                 Text(
                     text = documentation.summary,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
@@ -424,10 +455,13 @@ private fun RepairDocumentationRow(
 private fun RepairDocumentationDetailsScreen(
     vehicle: Vehicle,
     documentation: RepairDocumentation,
+    repair: RepairProject?,
+    archivedShoppingList: List<ShoppingListItem>,
     onDocumentationUpdated: (RepairDocumentation) -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    var selectedTab by remember(documentation.repairId, documentation.repairTitle) { mutableStateOf("Opis") }
     var isAddingTisLink by remember { mutableStateOf(false) }
     var tisLinkPendingEdit by remember { mutableStateOf<IndexedTisDocumentationLink?>(null) }
     var isAddingYoutubeLink by remember { mutableStateOf(false) }
@@ -788,50 +822,72 @@ private fun RepairDocumentationDetailsScreen(
                 }
             }
             item {
-                Header(
-                    title = documentation.repairTitle,
-                    subtitle = "${vehicle.displayName.ifBlank { "BMW" }} / ${documentation.area.label}"
+                DocumentationRepairHeader(
+                    vehicle = vehicle,
+                    documentation = documentation,
+                    repair = repair
                 )
             }
             item {
-                Text(
-                    text = documentation.summary,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                SegmentTabs(
+                    tabs = listOf("Opis", "Czesci", "Dokumenty", "Momenty", "Notatki"),
+                    selectedTab = selectedTab,
+                    onSelect = { selectedTab = it }
                 )
             }
-            item {
-                DocumentationTransferActions(
-                    status = importExportStatus,
-                    onExport = {
-                        documentationExportLauncher.launch(
-                            "${documentation.repairTitle.safeExportFileName()}-dokumentacja.bmwdoc.zip"
+            when (selectedTab) {
+                "Opis" -> item {
+                    ArchiveRepairOverviewTab(
+                        documentation = documentation,
+                        repair = repair
+                    )
+                }
+                "Czesci" -> item {
+                    ArchivedRepairPartsTab(shoppingList = archivedShoppingList)
+                }
+                "Dokumenty" -> item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        DocumentationTransferActions(
+                            status = importExportStatus,
+                            onExport = {
+                                documentationExportLauncher.launch(
+                                    "${documentation.repairTitle.safeExportFileName()}-dokumentacja.bmwdoc.zip"
+                                )
+                            },
+                            onImport = {
+                                documentationImportLauncher.launch(
+                                    arrayOf(
+                                        "application/zip",
+                                        "application/octet-stream",
+                                        "application/x-zip-compressed"
+                                    )
+                                )
+                            }
                         )
-                    },
-                    onImport = {
-                        documentationImportLauncher.launch(
-                            arrayOf(
-                                "application/zip",
-                                "application/octet-stream",
-                                "application/x-zip-compressed"
-                            )
+                        DocumentationLinksTile(
+                            title = "Schematy",
+                            subtitle = "Linki do procedur TIS i schematow powiazanych z ta naprawa.",
+                            marker = "${documentation.effectiveTisDocuments().size} linkow",
+                            links = documentation.effectiveTisDocuments(),
+                            isExpanded = isLinksExpanded,
+                            onToggle = { isLinksExpanded = !isLinksExpanded },
+                            onAddLink = { isAddingTisLink = true },
+                            onEditLink = { index, link ->
+                                tisLinkPendingEdit = IndexedTisDocumentationLink(index, link)
+                            }
+                        )
+                        YoutubeLinksTile(
+                            videos = documentation.effectiveYoutubeVideos(),
+                            isExpanded = isYoutubeExpanded,
+                            onToggle = { isYoutubeExpanded = !isYoutubeExpanded },
+                            onAddLink = { isAddingYoutubeLink = true },
+                            onEditVideo = { index, video ->
+                                youtubeVideoPendingEdit = IndexedYoutubeVideo(index, video)
+                            }
                         )
                     }
-                )
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    DocumentationLinksTile(
-                        title = "Schematy",
-                        subtitle = "Linki do procedur TIS i schematow powiazanych z ta naprawa.",
-                        marker = "${documentation.effectiveTisDocuments().size} linkow",
-                        links = documentation.effectiveTisDocuments(),
-                        isExpanded = isLinksExpanded,
-                        onToggle = { isLinksExpanded = !isLinksExpanded },
-                        onAddLink = { isAddingTisLink = true },
-                        onEditLink = { index, link ->
-                            tisLinkPendingEdit = IndexedTisDocumentationLink(index, link)
-                        }
-                    )
+                }
+                "Momenty" -> item {
                     TorqueTablesTile(
                         tables = documentation.effectiveTorqueTables(),
                         importStatus = torqueImportStatus,
@@ -894,15 +950,8 @@ private fun RepairDocumentationDetailsScreen(
                             }
                         }
                     )
-                    YoutubeLinksTile(
-                        videos = documentation.effectiveYoutubeVideos(),
-                        isExpanded = isYoutubeExpanded,
-                        onToggle = { isYoutubeExpanded = !isYoutubeExpanded },
-                        onAddLink = { isAddingYoutubeLink = true },
-                        onEditVideo = { index, video ->
-                            youtubeVideoPendingEdit = IndexedYoutubeVideo(index, video)
-                        }
-                    )
+                }
+                "Notatki" -> item {
                     PersonalNotesTile(
                         items = documentation.personalNotes,
                         isExpanded = isPersonalNotesExpanded,
@@ -938,6 +987,170 @@ private fun RepairDocumentationDetailsScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DocumentationRepairHeader(
+    vehicle: Vehicle,
+    documentation: RepairDocumentation,
+    repair: RepairProject?,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = repair?.title ?: documentation.repairTitle,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "${vehicle.displayName.ifBlank { "BMW" }} / ${documentation.area.label}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
+            }
+            repair?.let {
+                StatusBadge(it.status.normalizedRepairStatusLabel())
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchiveRepairOverviewTab(
+    documentation: RepairDocumentation,
+    repair: RepairProject?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Opis", fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = repair?.problemDescription?.ifBlank { documentation.summary } ?: documentation.summary,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+            }
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Status archiwum", fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "Ten wpis jest dokumentacja zakonczonej naprawy. Dane z listy zakupow sa tutaj tylko historia i nie aktywuja zakupow w programie.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                    fontSize = 13.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchivedRepairPartsTab(shoppingList: List<ShoppingListItem>) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Archiwalna lista zakupow",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (shoppingList.isEmpty()) {
+                    Text(
+                        text = "Brak zapisanych pozycji z listy zakupow dla tej dokumentacji.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                } else {
+                    shoppingList.forEach { item ->
+                        ArchivedShoppingListRow(item)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchivedShoppingListRow(item: ShoppingListItem) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(46.dp),
+            color = MaterialTheme.colorScheme.background.copy(alpha = 0.62f),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            PartPhotoContent(photoUri = item.imageUri, height = 46.dp)
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = item.name,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = item.manufacturerPartNumber.ifBlank { item.partNumber.ifBlank { item.source } },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.64f),
+                fontSize = 13.sp,
+                maxLines = 1
+            )
+        }
+        Text(
+            text = "${item.quantity} szt.",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Surface(
+            color = AccentBlue.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text(
+                text = "Historia",
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                color = AccentBlue,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -3078,6 +3291,11 @@ private fun RepairDocumentation.toExportJson(
     JSONObject()
         .put("title", title)
         .put("summary", summary)
+        .put("archivedShoppingList", JSONArray().apply {
+            archivedShoppingList.forEach { item ->
+                put(item.toExportJson())
+            }
+        })
         .put("tisDocuments", JSONArray().apply {
             effectiveTisDocuments().forEach { link ->
                 put(JSONObject().put("title", link.title).put("url", link.url))
@@ -3153,6 +3371,7 @@ private fun JSONObject.toImportedDocumentation(
     return currentDocumentation.copy(
         title = optString("title").ifBlank { currentDocumentation.title },
         summary = optString("summary").ifBlank { currentDocumentation.summary },
+        archivedShoppingList = optJSONArray("archivedShoppingList").toImportedShoppingList(),
         tisLinks = emptyList(),
         tisDocuments = optJSONArray("tisDocuments").toImportedTisDocuments(),
         torqueSpecs = importedTorqueTables.firstOrNull()?.torqueSpecs.orEmpty(),
@@ -3163,6 +3382,51 @@ private fun JSONObject.toImportedDocumentation(
         youtubeVideos = optJSONArray("youtubeVideos").toImportedYoutubeVideos(),
         personalNotes = optJSONArray("personalNotes").toImportedPersonalNotes(::resolveAsset)
     )
+}
+
+private fun ShoppingListItem.toExportJson(): JSONObject =
+    JSONObject()
+        .put("id", id)
+        .put("partNumber", partNumber)
+        .put("manufacturerPartNumber", manufacturerPartNumber)
+        .put("name", name)
+        .put("manufacturer", manufacturer)
+        .put("repairTitle", repairTitle)
+        .put("repairId", repairId)
+        .put("area", area.name)
+        .put("quantity", quantity)
+        .put("source", source)
+        .put("price", price)
+        .put("imageUri", imageUri)
+        .put("shopUrl", shopUrl)
+        .put("realOemUrl", realOemUrl)
+
+private fun JSONArray?.toImportedShoppingList(): List<ShoppingListItem> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                ShoppingListItem(
+                    id = item.optString("id"),
+                    partNumber = item.optString("partNumber"),
+                    manufacturerPartNumber = item.optString("manufacturerPartNumber"),
+                    name = item.optString("name"),
+                    manufacturer = item.optString("manufacturer"),
+                    repairTitle = item.optString("repairTitle"),
+                    repairId = item.optString("repairId"),
+                    area = runCatching { VehicleArea.valueOf(item.optString("area")) }
+                        .getOrDefault(VehicleArea.Service),
+                    quantity = item.optInt("quantity", 1),
+                    source = item.optString("source"),
+                    price = item.optString("price"),
+                    imageUri = item.optString("imageUri").ifBlank { null },
+                    shopUrl = item.optString("shopUrl").ifBlank { null },
+                    realOemUrl = item.optString("realOemUrl").ifBlank { null }
+                )
+            )
+        }
+    }
 }
 
 private fun TorqueSpec.toJson(): JSONObject =
@@ -3882,6 +4146,22 @@ private fun TorqueSpec.stableTorqueKey(): String =
         tighteningSpecifications.normalizeForTorqueKey(),
         torque.normalizeForTorqueKey()
     ).joinToString("|")
+
+private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
+
+private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
+    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
+
+private fun String.isFinishedRepairStatus(): Boolean =
+    lowercase().contains("zakon")
+
+private fun String.normalizedRepairStatusLabel(): String = when {
+    lowercase().contains("zakon") -> "Zakonczona"
+    lowercase().contains("plan") -> "Planowana"
+    lowercase().contains("trak") -> "W trakcie"
+    else -> this
+}
 
 @Preview(showBackground = true, widthDp = 430)
 @Composable

@@ -6,6 +6,7 @@ import pl.garage.bmwassistant.model.PersonalDocumentationItemType
 import pl.garage.bmwassistant.model.RepairCheckpoint
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
+import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.TisDocumentationLink
 import pl.garage.bmwassistant.model.TorqueDiagramAssignment
 import pl.garage.bmwassistant.model.TorqueSpec
@@ -153,6 +154,7 @@ private fun documentationToJson(documentation: List<RepairDocumentation>): JSONA
                     .put("area", item.area.name)
                     .put("repairTitle", item.repairTitle)
                     .put("summary", item.summary)
+                    .put("archivedShoppingList", shoppingListToJson(item.archivedShoppingList))
                     .put("tisLinks", JSONArray(item.effectiveTisDocuments().map { it.url }))
                     .put("tisDocuments", tisDocumentsToJson(item.effectiveTisDocuments()))
                     .put("torqueSpecs", torqueSpecsToJson(item.torqueSpecs))
@@ -193,6 +195,7 @@ private fun documentationFromJson(
                         area = area,
                         repairTitle = repairTitle,
                         summary = item.optString("summary"),
+                        archivedShoppingList = item.optJSONArray("archivedShoppingList").toShoppingList(),
                         tisLinks = item.optJSONArray("tisLinks").toStringList(),
                         tisDocuments = item.optJSONArray("tisDocuments").toTisDocuments(),
                         torqueSpecs = item.optJSONArray("torqueSpecs").toTorqueSpecs(),
@@ -209,6 +212,57 @@ private fun documentationFromJson(
             }
         }
     }.getOrDefault(emptyList())
+
+private fun shoppingListToJson(items: List<ShoppingListItem>): JSONArray =
+    JSONArray().apply {
+        items.forEach { item ->
+            put(
+                JSONObject()
+                    .put("id", item.id)
+                    .put("partNumber", item.partNumber)
+                    .put("manufacturerPartNumber", item.manufacturerPartNumber)
+                    .put("name", item.name)
+                    .put("manufacturer", item.manufacturer)
+                    .put("repairTitle", item.repairTitle)
+                    .put("repairId", item.repairId)
+                    .put("area", item.area.name)
+                    .put("quantity", item.quantity)
+                    .put("source", item.source)
+                    .put("price", item.price)
+                    .put("imageUri", item.imageUri)
+                    .put("shopUrl", item.shopUrl)
+                    .put("realOemUrl", item.realOemUrl)
+            )
+        }
+    }
+
+private fun JSONArray?.toShoppingList(): List<ShoppingListItem> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                ShoppingListItem(
+                    id = item.optString("id"),
+                    partNumber = item.optString("partNumber"),
+                    manufacturerPartNumber = item.optString("manufacturerPartNumber"),
+                    name = item.optString("name"),
+                    manufacturer = item.optString("manufacturer"),
+                    repairTitle = item.optString("repairTitle"),
+                    repairId = item.optString("repairId"),
+                    area = runCatching { VehicleArea.valueOf(item.optString("area")) }
+                        .getOrDefault(VehicleArea.Service),
+                    quantity = item.optInt("quantity", 1),
+                    source = item.optString("source"),
+                    price = item.optString("price"),
+                    imageUri = item.optString("imageUri").ifBlank { null },
+                    shopUrl = item.optString("shopUrl").ifBlank { null },
+                    realOemUrl = item.optString("realOemUrl").ifBlank { null }
+                )
+            )
+        }
+    }
+}
 
 private fun torqueSpecsToJson(torqueSpecs: List<TorqueSpec>): JSONArray =
     JSONArray().apply {
