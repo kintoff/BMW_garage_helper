@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import org.json.JSONArray
 import org.json.JSONObject
 import pl.garage.bmwassistant.BuildConfig
 import java.io.File
@@ -28,31 +29,13 @@ class AppUpdateManager(
         if (!isConfigured()) return AppUpdateCheckResult.NotConfigured
 
         return runCatching {
-            val connection = (URL(latestReleaseUrl()).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                requestMethod = "GET"
-                setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-                setRequestProperty("User-Agent", "${context.packageName}/android-app-updater")
-            }
+            val release = fetchNewestRelease()
+                ?: return AppUpdateCheckResult.UpToDate(currentVersionName = BuildConfig.VERSION_NAME)
 
-            connection.useAndDisconnect { http ->
-                if (http.responseCode !in 200..299) {
-                    return AppUpdateCheckResult.Error(
-                        "Nie udalo sie sprawdzic release. GitHub zwrocil kod ${http.responseCode}."
-                    )
-                }
-
-                val response = http.inputStream.bufferedReader().use { it.readText() }
-                val release = parseRelease(JSONObject(response))
-                    ?: return AppUpdateCheckResult.Error("Nie znaleziono pliku APK w najnowszym release.")
-
-                if (release.isNewerThanCurrent()) {
-                    AppUpdateCheckResult.UpdateAvailable(release)
-                } else {
-                    AppUpdateCheckResult.UpToDate(currentVersionName = BuildConfig.VERSION_NAME)
-                }
+            if (release.isNewerThanCurrent()) {
+                AppUpdateCheckResult.UpdateAvailable(release)
+            } else {
+                AppUpdateCheckResult.UpToDate(currentVersionName = BuildConfig.VERSION_NAME)
             }
         }.getOrElse {
             AppUpdateCheckResult.Error(
@@ -197,8 +180,56 @@ class AppUpdateManager(
             sha256Digest = asset.optString("digest")
                 .removePrefix("sha256:")
                 .trim()
-                .takeIf(String::isNotBlank)
+                .takeIf(String::isNotBlank),
+            isPrerelease = root.optBoolean("prerelease", false)
         )
+    }
+
+    private fun fetchNewestRelease(): AppUpdateRelease? {
+        val latestResponse = request(latestReleaseUrl())
+        if (latestResponse.code in 200..299) {
+            return parseRelease(JSONObject(latestResponse.body))
+        }
+
+        if (latestResponse.code != HttpURLConnection.HTTP_NOT_FOUND) {
+            throw IllegalStateException(
+                "Nie udalo sie sprawdzic release. GitHub zwrocil kod ${latestResponse.code}."
+            )
+        }
+
+        val releasesResponse = request(releasesUrl())
+        if (releasesResponse.code !in 200..299) {
+            throw IllegalStateException(
+                "Nie udalo sie pobrac listy release. GitHub zwrocil kod ${releasesResponse.code}."
+            )
+        }
+
+        val releases = JSONArray(releasesResponse.body)
+        for (index in 0 until releases.length()) {
+            val release = releases.optJSONObject(index)?.let(::parseRelease) ?: continue
+            return release
+        }
+        return null
+    }
+
+    private fun request(url: String): HttpResponse {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            requestMethod = "GET"
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            setRequestProperty("User-Agent", "${context.packageName}/android-app-updater")
+        }
+
+        return connection.useAndDisconnect { http ->
+            val stream = if (http.responseCode in 200..299) http.inputStream else http.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            HttpResponse(
+                code = http.responseCode,
+                body = body
+            )
+        }
     }
 
     private fun AppUpdateRelease.isNewerThanCurrent(): Boolean {
@@ -216,6 +247,9 @@ class AppUpdateManager(
 
     private fun latestReleaseUrl(): String =
         "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
+
+    private fun releasesUrl(): String =
+        "https://api.github.com/repos/$repoOwner/$repoName/releases"
 }
 
 data class AppUpdateRelease(
@@ -225,6 +259,7 @@ data class AppUpdateRelease(
     val publishedAt: String,
     val notes: String,
     val sha256Digest: String?,
+    val isPrerelease: Boolean,
 )
 
 sealed interface AppUpdateCheckResult {
@@ -250,6 +285,11 @@ private fun versionParts(versionName: String): List<Int> =
 
 private fun ByteArray.toHexString(): String =
     joinToString(separator = "") { byte -> "%02x".format(byte) }
+
+private data class HttpResponse(
+    val code: Int,
+    val body: String,
+)
 
 private inline fun <T> HttpURLConnection.useAndDisconnect(block: (HttpURLConnection) -> T): T =
     try {
