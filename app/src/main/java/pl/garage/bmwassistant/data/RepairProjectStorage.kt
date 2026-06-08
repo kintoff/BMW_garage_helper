@@ -1,11 +1,15 @@
 package pl.garage.bmwassistant.data
 
 import android.content.Context
+import android.net.Uri
+import android.util.Base64
 import pl.garage.bmwassistant.model.PersonalDocumentationItem
 import pl.garage.bmwassistant.model.PersonalDocumentationItemType
 import pl.garage.bmwassistant.model.RepairCheckpoint
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
+import pl.garage.bmwassistant.model.REPAIR_STATUS_FINISHED
+import pl.garage.bmwassistant.model.REPAIR_STATUS_IN_PROGRESS
 import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.TisDocumentationLink
 import pl.garage.bmwassistant.model.TorqueDiagramAssignment
@@ -14,17 +18,27 @@ import pl.garage.bmwassistant.model.TorqueSpecTable
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.model.YoutubeVideo
+import pl.garage.bmwassistant.model.normalizedRepairStatusLabel
 import pl.garage.bmwassistant.model.stableRepairId
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
-class RepairProjectStorage(context: Context) {
+class RepairProjectStorage(private val context: Context) {
     private val preferences = context.getSharedPreferences("garage_repair_projects", Context.MODE_PRIVATE)
 
     fun loadRepairs(vehicle: Vehicle): List<RepairProject> =
         preferences.getString(repairsKey(vehicle), null)
             ?.let(::repairsFromJson)
             .orEmpty()
+
+    fun hasRepairs(vehicle: Vehicle): Boolean =
+        preferences.contains(repairsKey(vehicle))
 
     fun saveRepairs(vehicle: Vehicle, repairs: List<RepairProject>) {
         preferences.edit()
@@ -39,16 +53,197 @@ class RepairProjectStorage(context: Context) {
             .orEmpty()
     }
 
+    fun hasDocumentation(vehicle: Vehicle): Boolean =
+        preferences.contains(documentationKey(vehicle))
+
     fun saveDocumentation(vehicle: Vehicle, documentation: List<RepairDocumentation>) {
         preferences.edit()
             .putString(documentationKey(vehicle), documentationToJson(documentation).toString())
             .apply()
     }
 
+    fun ensureVehicleData(vehicle: Vehicle) {
+        preferences.edit().apply {
+            if (!preferences.contains(repairsKey(vehicle))) {
+                putString(repairsKey(vehicle), JSONArray().toString())
+            }
+            if (!preferences.contains(documentationKey(vehicle))) {
+                putString(documentationKey(vehicle), JSONArray().toString())
+            }
+        }.apply()
+    }
+
+    fun createRepairArchiveExport(
+        vehicle: Vehicle,
+        repair: RepairProject,
+        documentation: RepairDocumentation,
+        shoppingItems: List<ShoppingListItem>,
+    ): ByteArray {
+        var assetCounter = 0
+        val assets = JSONArray()
+        val assetFiles = mutableListOf<ArchiveAsset>()
+
+        fun embedAsset(rawUri: String?): String? {
+            if (rawUri.isNullOrBlank()) return rawUri
+            if (rawUri.startsWith("http://") || rawUri.startsWith("https://")) return rawUri
+            val uri = runCatching { Uri.parse(rawUri) }.getOrNull() ?: return rawUri
+            val bytes = runCatching {
+                context.contentResolver.openInputStream(uri)?.use { input -> input.readBytes() }
+            }.getOrNull() ?: return rawUri
+            val assetId = "asset_${++assetCounter}"
+            val fileName = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                ?: "$assetId.bin"
+            val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+                .ifBlank { "$assetId.bin" }
+            val entryPath = "assets/$assetId-$safeName"
+            assetFiles += ArchiveAsset(
+                id = assetId,
+                fileName = fileName,
+                path = entryPath,
+                bytes = bytes
+            )
+            assets.put(
+                JSONObject()
+                    .put("id", assetId)
+                    .put("fileName", fileName)
+                    .put("path", entryPath)
+            )
+            return "asset://$assetId"
+        }
+
+        val exportedShopping = shoppingItems.ifEmpty { documentation.archivedShoppingList }
+            .map { it.withMappedUris(::embedAsset) }
+        val exportedDocumentation = documentation
+            .copy(archivedShoppingList = exportedShopping)
+            .withMappedUris(::embedAsset)
+
+        val manifest = JSONObject()
+            .put("format", "BMW_GARAGE_REPAIR_ARCHIVE")
+            .put("version", 2)
+            .put("vehicle", vehicle.displayName)
+            .put("repair", repairsToJson(listOf(repair)).getJSONObject(0))
+            .put("documentation", documentationToJson(listOf(exportedDocumentation)).getJSONObject(0))
+            .put("shoppingList", shoppingListToJson(exportedShopping))
+            .put("assets", assets)
+
+        return ByteArrayOutputStream().use { output ->
+            ZipOutputStream(output).use { zip ->
+                zip.putNextEntry(ZipEntry("manifest.json"))
+                zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+                assetFiles.forEach { asset ->
+                    zip.putNextEntry(ZipEntry(asset.path))
+                    zip.write(asset.bytes)
+                    zip.closeEntry()
+                }
+            }
+            output.toByteArray()
+        }
+    }
+
+    fun peekRepairArchiveTitle(rawArchive: ByteArray): String? =
+        runCatching {
+            val root = readRepairArchive(rawArchive)?.manifest ?: return@runCatching null
+            if (root.optString("format") != "BMW_GARAGE_REPAIR_ARCHIVE") return@runCatching null
+            root.optJSONObject("repair")?.optString("title")?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+
+    fun importRepairArchive(
+        vehicle: Vehicle,
+        rawArchive: ByteArray,
+        importAsArchived: Boolean,
+    ): ImportedRepairArchive? =
+        runCatching {
+            val archive = readRepairArchive(rawArchive) ?: return@runCatching null
+            val root = archive.manifest
+            if (root.optString("format") != "BMW_GARAGE_REPAIR_ARCHIVE") return@runCatching null
+            val repairObject = root.optJSONObject("repair") ?: return@runCatching null
+            val documentationObject = root.optJSONObject("documentation") ?: return@runCatching null
+            val assets = root.optJSONArray("assets").toAssetMap()
+            val importedRepair = repairsFromJson(JSONArray().put(repairObject).toString()).firstOrNull()
+                ?: return@runCatching null
+            val newRepairId = "${importedRepair.id}_import_${System.currentTimeMillis()}"
+            fun restoreAsset(rawUri: String?): String? {
+                if (rawUri.isNullOrBlank() || !rawUri.startsWith("asset://")) return rawUri
+                val assetId = rawUri.removePrefix("asset://")
+                val asset = assets[assetId] ?: return rawUri
+                val bytes = archive.assetBytes[asset.path]
+                    ?: archive.assetBytes[assetId]
+                    ?: asset.data?.let { Base64.decode(it, Base64.DEFAULT) }
+                    ?: return rawUri
+                val directory = File(context.filesDir, "imported_repair_archives/$newRepairId")
+                directory.mkdirs()
+                val safeName = asset.fileName.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+                    .ifBlank { "$assetId.bin" }
+                val file = File(directory, "${System.currentTimeMillis()}_$safeName")
+                file.writeBytes(bytes)
+                return Uri.fromFile(file).toString()
+            }
+
+            val repair = importedRepair.copy(
+                id = newRepairId,
+                vehicleName = vehicle.displayName,
+                status = if (importAsArchived) REPAIR_STATUS_FINISHED else REPAIR_STATUS_IN_PROGRESS
+            )
+            val importedDocumentation = documentationFromJson(
+                JSONArray().put(documentationObject).toString(),
+                listOf(repair)
+            ).firstOrNull() ?: return@runCatching null
+            val importedShopping = (root.optJSONArray("shoppingList").toShoppingList() +
+                documentationObject.optJSONArray("archivedShoppingList").toShoppingList())
+                .distinctBy { it.archiveImportKey() }
+                .mapIndexed { index, item ->
+                    item.withMappedUris(::restoreAsset).copy(
+                        id = "shopping-${newRepairId}-${System.currentTimeMillis()}-$index",
+                        repairTitle = repair.title,
+                        repairId = repair.id,
+                        area = repair.area
+                    )
+                }
+            val restoredDocumentation = importedDocumentation
+                .withMappedUris(::restoreAsset)
+                .copy(
+                    repairId = repair.id,
+                    repairTitle = repair.title,
+                    area = repair.area,
+                    archivedShoppingList = if (importAsArchived) importedShopping else emptyList()
+                )
+
+            ImportedRepairArchive(
+                repair = repair,
+                documentation = restoredDocumentation,
+                shoppingList = if (importAsArchived) emptyList() else importedShopping
+            )
+        }.getOrNull()
+
     private fun repairsKey(vehicle: Vehicle): String = "repairs_${vehicle.storageKey()}"
 
     private fun documentationKey(vehicle: Vehicle): String = "documentation_${vehicle.storageKey()}"
 }
+
+data class ImportedRepairArchive(
+    val repair: RepairProject,
+    val documentation: RepairDocumentation,
+    val shoppingList: List<ShoppingListItem>,
+)
+
+private data class ExportedAsset(
+    val fileName: String,
+    val path: String,
+    val data: String? = null,
+)
+
+private data class ArchiveAsset(
+    val id: String,
+    val fileName: String,
+    val path: String,
+    val bytes: ByteArray,
+)
+
+private data class RepairArchivePayload(
+    val manifest: JSONObject,
+    val assetBytes: Map<String, ByteArray>,
+)
 
 private fun repairsToJson(repairs: List<RepairProject>): JSONArray =
     JSONArray().apply {
@@ -59,7 +254,7 @@ private fun repairsToJson(repairs: List<RepairProject>): JSONArray =
                     .put("id", repair.id)
                     .put("area", repair.area.name)
                     .put("vehicleName", repair.vehicleName)
-                    .put("status", repair.status)
+                    .put("status", repair.status.normalizedRepairStatusLabel())
                     .put("priority", repair.priority)
                     .put("problemDescription", repair.problemDescription)
                     .put("goal", repair.goal)
@@ -91,7 +286,7 @@ private fun repairsFromJson(rawJson: String): List<RepairProject> =
                         area = runCatching { VehicleArea.valueOf(item.optString("area")) }
                             .getOrDefault(VehicleArea.Engine),
                         vehicleName = item.optString("vehicleName"),
-                        status = item.optString("status"),
+                        status = item.optString("status").normalizedRepairStatusLabel(),
                         priority = item.optString("priority"),
                         problemDescription = item.optString("problemDescription"),
                         goal = item.optString("goal"),
@@ -164,6 +359,7 @@ private fun documentationToJson(documentation: List<RepairDocumentation>): JSONA
                     .put("youtubeLinks", JSONArray(item.youtubeLinks))
                     .put("youtubeVideos", youtubeVideosToJson(item.effectiveYoutubeVideos()))
                     .put("personalNotes", personalNotesToJson(item.personalNotes))
+                    .put("userNotes", item.userNotes)
             )
         }
     }
@@ -206,6 +402,7 @@ private fun documentationFromJson(
                         youtubeLinks = item.optJSONArray("youtubeLinks").toStringList(),
                         youtubeVideos = item.optJSONArray("youtubeVideos").toYoutubeVideos(),
                         personalNotes = item.optJSONArray("personalNotes").toPersonalNotes(),
+                        userNotes = item.optString("userNotes"),
                         repairId = migratedRepairId
                     )
                 )
@@ -492,6 +689,101 @@ private fun JSONArray?.toTorqueDiagramAssignments(): List<TorqueDiagramAssignmen
         }
     }
 }
+
+private fun JSONArray?.toAssetMap(): Map<String, ExportedAsset> {
+    if (this == null) return emptyMap()
+    return buildMap {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            val id = item.optString("id")
+            if (id.isBlank()) continue
+            put(
+                id,
+                ExportedAsset(
+                    fileName = item.optString("fileName").ifBlank { "$id.bin" },
+                    path = item.optString("path").ifBlank { id },
+                    data = item.optString("data").ifBlank { null }
+                )
+            )
+        }
+    }
+}
+
+private fun readRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
+    readZippedRepairArchive(rawArchive) ?: readLegacyJsonRepairArchive(rawArchive)
+
+private fun readZippedRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
+    runCatching {
+        var manifest: JSONObject? = null
+        val assetBytes = mutableMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(rawArchive)).use { zip ->
+            generateSequence { zip.nextEntry }.forEach { entry ->
+                val bytes = zip.readBytes()
+                if (entry.name == "manifest.json") {
+                    manifest = JSONObject(bytes.toString(Charsets.UTF_8))
+                } else if (!entry.isDirectory) {
+                    assetBytes[entry.name] = bytes
+                }
+                zip.closeEntry()
+            }
+        }
+        manifest?.let { RepairArchivePayload(it, assetBytes) }
+    }.getOrNull()
+
+private fun readLegacyJsonRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
+    runCatching {
+        val manifest = JSONObject(rawArchive.toString(Charsets.UTF_8))
+        if (manifest.optString("format") != "BMW_GARAGE_REPAIR_ARCHIVE") return@runCatching null
+        val assetBytes = buildMap {
+            val assets = manifest.optJSONArray("assets")
+            if (assets != null) {
+                for (index in 0 until assets.length()) {
+                    val item = assets.optJSONObject(index) ?: continue
+                    val id = item.optString("id")
+                    val data = item.optString("data")
+                    if (id.isNotBlank() && data.isNotBlank()) {
+                        put(id, Base64.decode(data, Base64.DEFAULT))
+                    }
+                }
+            }
+        }
+        RepairArchivePayload(manifest, assetBytes)
+    }.getOrNull()
+
+private fun RepairDocumentation.withMappedUris(
+    mapper: (String?) -> String?,
+): RepairDocumentation =
+    copy(
+        archivedShoppingList = archivedShoppingList.map { it.withMappedUris(mapper) },
+        torqueDiagramImageUri = mapper(torqueDiagramImageUri),
+        torqueTables = effectiveTorqueTables().map { table ->
+            table.copy(diagramImageUri = mapper(table.diagramImageUri))
+        },
+        personalNotes = personalNotes.map { note ->
+            note.copy(uri = mapper(note.uri))
+        }
+    )
+
+private fun ShoppingListItem.withMappedUris(
+    mapper: (String?) -> String?,
+): ShoppingListItem =
+    copy(imageUri = mapper(imageUri))
+
+private fun ShoppingListItem.archiveImportKey(): String =
+    listOf(
+        id,
+        repairId,
+        partNumber,
+        manufacturerPartNumber,
+        name,
+        manufacturer,
+        quantity.toString(),
+        source,
+        price,
+        imageUri.orEmpty(),
+        shopUrl.orEmpty(),
+        realOemUrl.orEmpty()
+    ).joinToString("|")
 
 private fun JSONArray?.toStringList(): List<String> {
     if (this == null) return emptyList()

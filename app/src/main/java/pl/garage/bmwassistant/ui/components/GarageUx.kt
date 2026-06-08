@@ -1,6 +1,7 @@
 package pl.garage.bmwassistant.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -19,7 +21,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -135,11 +144,10 @@ fun BottomNavBar(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text(
-                    text = navIconFor(item),
+                GarageNavLineIcon(
+                    icon = navIconFor(item),
                     color = if (selected) AccentBlue else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold
+                    modifier = Modifier.size(22.dp)
                 )
                 Text(
                     text = item,
@@ -225,11 +233,109 @@ fun statusColorFor(status: String): Color {
     }
 }
 
-private fun navIconFor(item: String): String = when (item) {
-    "Przeglad" -> "⌂"
-    "Naprawy" -> "⌕"
-    "Czesci" -> "□"
-    "Dokumenty" -> "▤"
-    "Wiecej" -> "•••"
-    else -> "•"
+private enum class GarageNavIcon {
+    Garage,
+    Wrench,
+    Box,
+    Document,
+    Profile
+}
+
+private fun navIconFor(item: String): GarageNavIcon = when (item) {
+    "Przeglad" -> GarageNavIcon.Garage
+    "Naprawy" -> GarageNavIcon.Wrench
+    "Czesci" -> GarageNavIcon.Box
+    "Dokumenty" -> GarageNavIcon.Document
+    "Wiecej" -> GarageNavIcon.Profile
+    else -> GarageNavIcon.Garage
+}
+
+@Composable
+private fun GarageNavLineIcon(
+    icon: GarageNavIcon,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = w * 0.075f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        when (icon) {
+            GarageNavIcon.Wrench -> {
+                drawLine(color, Offset(w * 0.23f, h * 0.78f), Offset(w * 0.62f, h * 0.39f), strokeWidth = w * 0.12f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.2f, h * 0.84f), Offset(w * 0.32f, h * 0.72f), strokeWidth = w * 0.12f, cap = StrokeCap.Round)
+                val jaw = Path().apply {
+                    moveTo(w * 0.64f, h * 0.37f)
+                    cubicTo(w * 0.58f, h * 0.21f, w * 0.7f, h * 0.08f, w * 0.86f, h * 0.14f)
+                    lineTo(w * 0.74f, h * 0.27f)
+                    lineTo(w * 0.82f, h * 0.36f)
+                    lineTo(w * 0.95f, h * 0.25f)
+                    cubicTo(w * 0.98f, h * 0.42f, w * 0.84f, h * 0.54f, w * 0.68f, h * 0.48f)
+                }
+                drawPath(jaw, color, style = stroke)
+            }
+            GarageNavIcon.Box -> {
+                val top = Path().apply {
+                    moveTo(w * 0.5f, h * 0.1f)
+                    lineTo(w * 0.86f, h * 0.3f)
+                    lineTo(w * 0.5f, h * 0.5f)
+                    lineTo(w * 0.14f, h * 0.3f)
+                    close()
+                }
+                val left = Path().apply {
+                    moveTo(w * 0.14f, h * 0.3f)
+                    lineTo(w * 0.5f, h * 0.5f)
+                    lineTo(w * 0.5f, h * 0.88f)
+                    lineTo(w * 0.14f, h * 0.68f)
+                    close()
+                }
+                val right = Path().apply {
+                    moveTo(w * 0.86f, h * 0.3f)
+                    lineTo(w * 0.5f, h * 0.5f)
+                    lineTo(w * 0.5f, h * 0.88f)
+                    lineTo(w * 0.86f, h * 0.68f)
+                    close()
+                }
+                drawPath(top, color, style = stroke)
+                drawPath(left, color, style = stroke)
+                drawPath(right, color, style = stroke)
+            }
+            GarageNavIcon.Document -> {
+                val page = Path().apply {
+                    moveTo(w * 0.23f, h * 0.1f)
+                    lineTo(w * 0.62f, h * 0.1f)
+                    lineTo(w * 0.78f, h * 0.27f)
+                    lineTo(w * 0.78f, h * 0.88f)
+                    lineTo(w * 0.23f, h * 0.88f)
+                    close()
+                }
+                drawPath(page, color, style = stroke)
+                drawLine(color, Offset(w * 0.62f, h * 0.1f), Offset(w * 0.62f, h * 0.28f), strokeWidth = w * 0.075f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.62f, h * 0.28f), Offset(w * 0.78f, h * 0.28f), strokeWidth = w * 0.075f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.36f, h * 0.44f), Offset(w * 0.62f, h * 0.44f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.36f, h * 0.59f), Offset(w * 0.62f, h * 0.59f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+                drawLine(color, Offset(w * 0.36f, h * 0.74f), Offset(w * 0.54f, h * 0.74f), strokeWidth = w * 0.065f, cap = StrokeCap.Round)
+            }
+            GarageNavIcon.Garage -> {
+                val roof = Path().apply {
+                    moveTo(w * 0.14f, h * 0.43f)
+                    lineTo(w * 0.5f, h * 0.16f)
+                    lineTo(w * 0.86f, h * 0.43f)
+                }
+                drawPath(roof, color, style = stroke)
+                drawRoundRect(color, topLeft = Offset(w * 0.22f, h * 0.43f), size = Size(w * 0.56f, h * 0.4f), cornerRadius = CornerRadius(w * 0.04f), style = stroke)
+                drawRoundRect(color, topLeft = Offset(w * 0.34f, h * 0.58f), size = Size(w * 0.32f, h * 0.18f), cornerRadius = CornerRadius(w * 0.04f), style = Stroke(width = w * 0.055f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawCircle(color, radius = w * 0.035f, center = Offset(w * 0.41f, h * 0.76f))
+                drawCircle(color, radius = w * 0.035f, center = Offset(w * 0.59f, h * 0.76f))
+            }
+            GarageNavIcon.Profile -> {
+                drawCircle(color, radius = w * 0.14f, center = Offset(w * 0.5f, h * 0.28f), style = stroke)
+                val body = Path().apply {
+                    moveTo(w * 0.25f, h * 0.86f)
+                    cubicTo(w * 0.25f, h * 0.61f, w * 0.75f, h * 0.61f, w * 0.75f, h * 0.86f)
+                }
+                drawPath(body, color, style = stroke)
+            }
+        }
+    }
 }

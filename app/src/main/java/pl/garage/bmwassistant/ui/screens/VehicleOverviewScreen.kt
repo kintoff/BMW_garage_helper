@@ -1,6 +1,8 @@
 package pl.garage.bmwassistant.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,7 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import pl.garage.bmwassistant.R
+import pl.garage.bmwassistant.data.ImportedRepairArchive
 import pl.garage.bmwassistant.data.PartInventoryStorage
 import pl.garage.bmwassistant.data.RepairProjectStorage
 import pl.garage.bmwassistant.data.sampleConsumablesFor
@@ -53,6 +57,8 @@ import pl.garage.bmwassistant.model.RepairProject
 import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
+import pl.garage.bmwassistant.model.isFinishedRepairStatus
+import pl.garage.bmwassistant.model.normalizedRepairStatusLabel
 import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.AccentBlue
 import pl.garage.bmwassistant.ui.components.AccentGreen
@@ -60,11 +66,16 @@ import pl.garage.bmwassistant.ui.components.AccentPurple
 import pl.garage.bmwassistant.ui.components.AccentRed
 import pl.garage.bmwassistant.ui.components.AccentYellow
 import pl.garage.bmwassistant.ui.components.BottomNavBar
+import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.GaragePanel
 import pl.garage.bmwassistant.ui.components.MetricBlock
 import pl.garage.bmwassistant.ui.components.SectionTitle
 import pl.garage.bmwassistant.ui.components.StatusBadge
+import pl.garage.bmwassistant.ui.components.detailImageResource
 import pl.garage.bmwassistant.ui.theme.GarageTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun VehicleOverviewScreen(
@@ -74,24 +85,43 @@ fun VehicleOverviewScreen(
 ) {
     val currentVehicle = vehicle ?: return
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val repairStorage = remember { RepairProjectStorage(context.applicationContext) }
     val partStorage = remember { PartInventoryStorage(context.applicationContext) }
     var selectedModule by remember { mutableStateOf<VehicleModule?>(null) }
     var isEditingVehicle by remember { mutableStateOf(false) }
     var initialDocumentationRepairTitle by remember { mutableStateOf<String?>(null) }
+    var initialRepairListRepairId by remember { mutableStateOf<String?>(null) }
     var initialRepairListRepairTitle by remember { mutableStateOf<String?>(null) }
+    var startAddRepairFlow by remember { mutableStateOf(false) }
+    var isQuickRepairActionOpen by remember { mutableStateOf(false) }
     var initialShoppingRepairTitle by remember { mutableStateOf<String?>(null) }
     var initialShoppingArea by remember { mutableStateOf<VehicleArea?>(null) }
     var isDocumentationDetailsOpen by remember { mutableStateOf(false) }
     var shouldReturnFromDocumentationToRepairs by remember { mutableStateOf(false) }
     var shouldReturnFromShoppingToRepairs by remember { mutableStateOf(false) }
+    var repairPendingExport by remember { mutableStateOf<RepairProject?>(null) }
+    var pendingExportArchive by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingImportArchive by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingImportTitle by remember { mutableStateOf<String?>(null) }
+    var pendingImportNewTitle by remember { mutableStateOf("") }
+    var archiveTransferMessage by remember { mutableStateOf<String?>(null) }
     var repairProjects by remember(currentVehicle) {
-        mutableStateOf(repairStorage.loadRepairs(currentVehicle).ifEmpty { sampleRepairsFor(currentVehicle) })
+        mutableStateOf(
+            if (repairStorage.hasRepairs(currentVehicle)) {
+                repairStorage.loadRepairs(currentVehicle)
+            } else {
+                sampleRepairsFor(currentVehicle)
+            }
+        )
     }
     var repairDocumentation by remember(currentVehicle) {
         mutableStateOf(
-            repairStorage.loadDocumentation(currentVehicle)
-                .ifEmpty { sampleRepairDocumentationFor(currentVehicle) }
+            if (repairStorage.hasDocumentation(currentVehicle)) {
+                repairStorage.loadDocumentation(currentVehicle)
+            } else {
+                sampleRepairDocumentationFor(currentVehicle)
+            }
         )
     }
     var shoppingListItems by remember(currentVehicle) {
@@ -115,6 +145,21 @@ fun VehicleOverviewScreen(
     fun updateRepairDocumentation(documentation: List<RepairDocumentation>) {
         repairDocumentation = documentation
         repairStorage.saveDocumentation(currentVehicle, documentation)
+    }
+
+    fun upsertRepairDocumentation(updatedDocumentation: RepairDocumentation) {
+        var wasUpdated = false
+        val updatedList = repairDocumentation.map { documentation ->
+            if (documentation.belongsToRepair(updatedDocumentation)) {
+                wasUpdated = true
+                updatedDocumentation
+            } else {
+                documentation
+            }
+        }
+        updateRepairDocumentation(
+            if (wasUpdated) updatedList else updatedList + updatedDocumentation
+        )
     }
 
     fun appendShoppingItems(items: List<ShoppingListItem>) {
@@ -149,7 +194,270 @@ fun VehicleOverviewScreen(
         inventoryPartItems = partStorage.loadParts(currentVehicle)
     }
 
+    fun startRepairExport(repair: RepairProject) {
+        val documentation = repairDocumentation.firstOrNull { it.belongsToRepair(repair) }
+            ?: RepairDocumentation(
+                title = "Dokumentacja: ${repair.title}",
+                area = repair.area,
+                repairTitle = repair.title,
+                repairId = repair.id,
+                summary = "Dokumentacja powiazana z naprawa: ${repair.title}."
+            )
+        val exportShoppingItems = documentation.archivedShoppingList.ifEmpty {
+            (
+                shoppingListItems.filter { it.belongsToRepair(repair) } +
+                    inventoryPartItems
+                        .filter { it.belongsToRepair(repair) }
+                        .map { it.toArchivedShoppingListItem(repair) }
+                ).mergeArchivedShoppingItems(repair)
+        }
+        pendingExportArchive = repairStorage.createRepairArchiveExport(
+            vehicle = currentVehicle,
+            repair = repair,
+            documentation = documentation,
+            shoppingItems = exportShoppingItems
+        )
+        repairPendingExport = repair
+    }
+
+    fun importRepairFromArchive(
+        rawArchive: ByteArray,
+        importAsArchived: Boolean,
+        titleOverride: String? = null,
+    ) {
+        val imported = repairStorage.importRepairArchive(
+            vehicle = currentVehicle,
+            rawArchive = rawArchive,
+            importAsArchived = importAsArchived
+        )
+        if (imported == null) {
+            archiveTransferMessage = "Nie udalo sie odczytac pliku naprawy."
+            return
+        }
+        val renamedImport = titleOverride
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { imported.withRepairTitle(it) }
+            ?: imported
+        if (repairProjects.any { it.title.hasSameRepairTitleAs(renamedImport.repair.title) }) {
+            archiveTransferMessage = "Naprawa o tej nazwie juz istnieje. Zmien nazwe importowanej naprawy."
+            return
+        }
+        updateRepairs(repairProjects + renamedImport.repair)
+        updateRepairDocumentation(repairDocumentation + renamedImport.documentation)
+        if (renamedImport.shoppingList.isNotEmpty()) {
+            appendShoppingItems(renamedImport.shoppingList)
+        }
+        archiveTransferMessage = if (importAsArchived) {
+            "Zaimportowano naprawe do archiwum."
+        } else {
+            "Zaimportowano naprawe jako aktualna."
+        }
+    }
+
+    val repairExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        val exportArchive = pendingExportArchive
+        if (uri != null && exportArchive != null) {
+            coroutineScope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(exportArchive)
+                        }
+                    }.isSuccess
+                }
+                archiveTransferMessage = if (saved) {
+                    "Eksport naprawy zapisany do pliku."
+                } else {
+                    "Nie udalo sie zapisac pliku eksportu."
+                }
+                pendingExportArchive = null
+                repairPendingExport = null
+            }
+        } else {
+            pendingExportArchive = null
+            repairPendingExport = null
+        }
+    }
+
+    val repairImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                val rawArchive = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            input.readBytes()
+                        }
+                    }.getOrNull()
+                }
+                if (rawArchive == null) {
+                    archiveTransferMessage = "Nie udalo sie otworzyc pliku naprawy."
+                } else {
+                    pendingImportTitle = repairStorage.peekRepairArchiveTitle(rawArchive)
+                    pendingImportNewTitle = pendingImportTitle
+                        ?.takeIf { title -> repairProjects.any { it.title.hasSameRepairTitleAs(title) } }
+                        ?.let { title -> repairProjects.nextAvailableRepairTitle(title) }
+                        .orEmpty()
+                    pendingImportArchive = rawArchive
+                }
+            }
+        }
+    }
+
+    repairPendingExport?.let { repair ->
+        AlertDialog(
+            onDismissRequest = {
+                repairPendingExport = null
+                pendingExportArchive = null
+            },
+            title = { Text("Eksport naprawy") },
+            text = {
+                Text("Zapisac naprawe \"${repair.title}\" do jednego pliku do udostepnienia?")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val safeTitle = repair.title
+                            .lowercase()
+                            .replace(Regex("[^a-z0-9]+"), "-")
+                            .trim('-')
+                            .ifBlank { "naprawa" }
+                        repairExportLauncher.launch("$safeTitle.bmwrepair")
+                    }
+                ) {
+                    Text("Zapisz plik")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        repairPendingExport = null
+                        pendingExportArchive = null
+                    }
+                ) {
+                    Text("Anuluj")
+                }
+            }
+        )
+    }
+
+    pendingImportArchive?.let { rawArchive ->
+        val importedTitle = pendingImportTitle ?: "z pliku"
+        val hasTitleConflict = repairProjects.any { it.title.hasSameRepairTitleAs(importedTitle) }
+        val importTitle = if (hasTitleConflict) pendingImportNewTitle.trim() else importedTitle
+        val canImport = !hasTitleConflict || (
+            importTitle.isNotBlank() &&
+                repairProjects.none { it.title.hasSameRepairTitleAs(importTitle) }
+            )
+        AlertDialog(
+            onDismissRequest = {
+                pendingImportArchive = null
+                pendingImportTitle = null
+                pendingImportNewTitle = ""
+            },
+            title = { Text("Import naprawy") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Gdzie dodac naprawe \"$importedTitle\"?"
+                    )
+                    if (hasTitleConflict) {
+                        Text(
+                            text = "Naprawa o tej nazwie juz istnieje. Podaj nowa nazwe dla importu.",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        GarageTextField(
+                            value = pendingImportNewTitle,
+                            onValueChange = { pendingImportNewTitle = it },
+                            label = "Nowa nazwa naprawy",
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = repairProjects.nextAvailableRepairTitle(importedTitle)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = canImport,
+                    onClick = {
+                        importRepairFromArchive(
+                            rawArchive = rawArchive,
+                            importAsArchived = false,
+                            titleOverride = importTitle.takeIf { hasTitleConflict }
+                        )
+                        pendingImportArchive = null
+                        pendingImportTitle = null
+                        pendingImportNewTitle = ""
+                    }
+                ) {
+                    Text("Jako aktualna")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        enabled = canImport,
+                        onClick = {
+                            importRepairFromArchive(
+                                rawArchive = rawArchive,
+                                importAsArchived = true,
+                                titleOverride = importTitle.takeIf { hasTitleConflict }
+                            )
+                            pendingImportArchive = null
+                            pendingImportTitle = null
+                            pendingImportNewTitle = ""
+                        }
+                    ) {
+                        Text("Do archiwum")
+                    }
+                    TextButton(
+                        onClick = {
+                            pendingImportArchive = null
+                            pendingImportTitle = null
+                            pendingImportNewTitle = ""
+                        }
+                    ) {
+                        Text("Anuluj")
+                    }
+                }
+            }
+        )
+    }
+
+    archiveTransferMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { archiveTransferMessage = null },
+            title = { Text("Dokumentacja naprawy") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { archiveTransferMessage = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (isQuickRepairActionOpen) {
+        QuickRepairActionDialog(
+            onImportRepair = {
+                isQuickRepairActionOpen = false
+                repairImportLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+            },
+            onAddRepair = {
+                isQuickRepairActionOpen = false
+                startAddRepairFlow = true
+                selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+            },
+            onDismiss = { isQuickRepairActionOpen = false }
+        )
+    }
+
     BackHandler(enabled = selectedModule != null) {
+        startAddRepairFlow = false
         selectedModule = null
     }
 
@@ -171,10 +479,30 @@ fun VehicleOverviewScreen(
         return
     }
 
+    val bottomItems = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej")
+
+    fun selectBottomItem(item: String) {
+        selectedModule = when (item) {
+            "Naprawy" -> vehicleModules.first { it.type == VehicleModuleType.Repairs }
+            "Czesci" -> vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
+            "Dokumenty" -> vehicleModules.first { it.type == VehicleModuleType.Documentation }
+            "Wiecej" -> vehicleModules.first { it.type == VehicleModuleType.Status }
+            else -> null
+        }
+    }
+
     if (selectedModule?.type == VehicleModuleType.Status) {
         VehicleStatusScreen(
             vehicle = currentVehicle,
-            activeRepairAreas = repairProjects.filterNot { it.status.isFinishedStatus() }.map { it.area }.toSet(),
+            activeRepairAreas = repairProjects.filterNot { it.status.isFinishedRepairStatus() }.map { it.area }.toSet(),
+            bottomBar = {
+                BottomNavBar(
+                    items = bottomItems,
+                    selectedItem = "Wiecej",
+                    onSelect = ::selectBottomItem,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            },
             onBack = { selectedModule = null }
         )
         return
@@ -187,33 +515,32 @@ fun VehicleOverviewScreen(
             repairDocumentation = repairDocumentation,
             inventoryParts = inventoryPartItems,
             shoppingList = shoppingListItems,
+            initialRepairId = initialRepairListRepairId,
             initialRepairTitle = initialRepairListRepairTitle,
+            startAddRepairFlow = startAddRepairFlow,
+            onStartAddRepairFlowConsumed = { startAddRepairFlow = false },
             onRepairAdded = { repair, documentation ->
                 updateRepairs(repairProjects + repair)
                 updateRepairDocumentation(repairDocumentation + documentation)
             },
             onRepairUpdated = { updatedRepair ->
                 val previousRepair = repairProjects.firstOrNull { it.id == updatedRepair.id }
-                val movedToArchive = previousRepair?.status?.isFinishedStatus() != true &&
-                    updatedRepair.status.isFinishedStatus()
+                val movedToArchive = previousRepair?.status?.isFinishedRepairStatus() != true &&
+                    updatedRepair.status.isFinishedRepairStatus()
                 updateRepairs(
                     repairProjects.map { repair ->
                         if (repair.id == updatedRepair.id) updatedRepair else repair
                     }
                 )
                 if (movedToArchive) {
-                    val archivedShoppingList = shoppingListItems.filter { it.belongsToRepair(updatedRepair) } +
+                    val archivedShoppingList = (
+                        shoppingListItems.filter { it.belongsToRepair(updatedRepair) } +
                         inventoryPartItems
                             .filter { it.belongsToRepair(updatedRepair) }
                             .map { it.toArchivedShoppingListItem(updatedRepair) }
+                        ).mergeArchivedShoppingItems(updatedRepair)
                     updateRepairDocumentation(
-                        repairDocumentation.map { documentation ->
-                            if (documentation.belongsToRepair(updatedRepair)) {
-                                documentation.copy(archivedShoppingList = archivedShoppingList)
-                            } else {
-                                documentation
-                            }
-                        }
+                        repairDocumentation.withArchivedShoppingList(updatedRepair, archivedShoppingList)
                     )
                     updateShoppingItems(
                         shoppingListItems.filterNot { it.belongsToRepair(updatedRepair) }
@@ -225,21 +552,19 @@ fun VehicleOverviewScreen(
             },
             onOpenDocumentation = { documentation ->
                 initialDocumentationRepairTitle = documentation.repairTitle
+                initialRepairListRepairId = documentation.repairId
                 initialRepairListRepairTitle = documentation.repairTitle
                 isDocumentationDetailsOpen = true
                 shouldReturnFromDocumentationToRepairs = true
                 selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
             },
             onDocumentationUpdated = { updatedDocumentation ->
-                updateRepairDocumentation(
-                    repairDocumentation.map { documentation ->
-                        if (documentation.belongsToRepair(updatedDocumentation)) updatedDocumentation else documentation
-                    }
-                )
+                upsertRepairDocumentation(updatedDocumentation)
             },
             onOpenShoppingList = { repair ->
                 initialShoppingRepairTitle = repair.title
                 initialShoppingArea = repair.area
+                initialRepairListRepairId = repair.id
                 initialRepairListRepairTitle = repair.title
                 shouldReturnFromShoppingToRepairs = true
                 selectedModule = vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
@@ -253,13 +578,24 @@ fun VehicleOverviewScreen(
             onInventoryPartAdded = { part ->
                 appendInventoryPart(part)
             },
+            onExportRepair = { repair ->
+                startRepairExport(repair)
+            },
+            onImportRepair = {
+                repairImportLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+            },
             onInitialRepairClosed = {
+                initialRepairListRepairId = null
                 initialRepairListRepairTitle = null
+                startAddRepairFlow = false
             },
             onBack = {
+                initialRepairListRepairId = null
                 initialRepairListRepairTitle = null
+                startAddRepairFlow = false
                 selectedModule = null
-            }
+            },
+            onBottomSelect = ::selectBottomItem
         )
         return
     }
@@ -288,11 +624,7 @@ fun VehicleOverviewScreen(
                     selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
                 },
                 onDocumentationUpdated = { updatedDocumentation ->
-                    updateRepairDocumentation(
-                        repairDocumentation.map { documentation ->
-                            if (documentation.belongsToRepair(updatedDocumentation)) updatedDocumentation else documentation
-                        }
-                    )
+                    upsertRepairDocumentation(updatedDocumentation)
                 },
                 onOpenShoppingList = { repair ->
                     initialShoppingRepairTitle = repair.title
@@ -302,6 +634,12 @@ fun VehicleOverviewScreen(
                 onAddShoppingItems = {},
                 onShoppingListUpdated = {},
                 onInventoryPartAdded = {},
+                onExportRepair = { repair ->
+                    startRepairExport(repair)
+                },
+                onImportRepair = {
+                    repairImportLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+                },
                 onInitialRepairClosed = {
                     initialDocumentationRepairTitle = null
                 },
@@ -314,7 +652,8 @@ fun VehicleOverviewScreen(
                 onBack = {
                     initialDocumentationRepairTitle = null
                     selectedModule = null
-                }
+                },
+                onBottomSelect = ::selectBottomItem
             )
             return
         }
@@ -326,21 +665,7 @@ fun VehicleOverviewScreen(
             initialRepairTitle = initialDocumentationRepairTitle,
             returnToPreviousModuleOnBack = shouldReturnFromDocumentationToRepairs,
             onDocumentationUpdated = { updatedDocumentation ->
-                updateRepairDocumentation(
-                    repairDocumentation.map { documentation ->
-                        if (documentation.repairId == updatedDocumentation.repairId ||
-                            (
-                                documentation.repairId.isBlank() &&
-                                    documentation.repairTitle == updatedDocumentation.repairTitle &&
-                                    documentation.area == updatedDocumentation.area
-                                )
-                        ) {
-                            updatedDocumentation
-                        } else {
-                            documentation
-                        }
-                    }
-                )
+                upsertRepairDocumentation(updatedDocumentation)
             },
             onBack = {
                 initialDocumentationRepairTitle = null
@@ -349,6 +674,7 @@ fun VehicleOverviewScreen(
                     shouldReturnFromDocumentationToRepairs = false
                     selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
                 } else {
+                    initialRepairListRepairId = null
                     initialRepairListRepairTitle = null
                     selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
                 }
@@ -363,7 +689,11 @@ fun VehicleOverviewScreen(
             inventoryParts = inventoryPartItems,
             shoppingList = shoppingListItems,
             consumables = sampleConsumablesFor(),
-            initialSection = if (initialShoppingRepairTitle == null) null else PartsStorageSection.Shopping,
+            initialSection = if (initialShoppingRepairTitle == null) {
+                PartsStorageSection.Inventory
+            } else {
+                PartsStorageSection.Shopping
+            },
             initialShoppingRepairTitle = initialShoppingRepairTitle,
             initialShoppingArea = initialShoppingArea,
             onInitialShoppingClosed = {
@@ -388,6 +718,14 @@ fun VehicleOverviewScreen(
                     initialShoppingArea = null
                     selectedModule = null
                 }
+            },
+            bottomBar = {
+                BottomNavBar(
+                    items = bottomItems,
+                    selectedItem = "Czesci",
+                    onSelect = ::selectBottomItem,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
         )
         return
@@ -400,9 +738,8 @@ fun VehicleOverviewScreen(
         )
     }
 
-    val activeRepairs = repairProjects.filterNot { it.status.isFinishedStatus() }
+    val activeRepairs = repairProjects.filterNot { it.status.isFinishedRepairStatus() }
     val partsToBuy = shoppingListItems.take(3)
-    val bottomItems = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej")
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -450,6 +787,7 @@ fun VehicleOverviewScreen(
                                 DashboardRepairRow(
                                     repair = repair,
                                     onClick = {
+                                        initialRepairListRepairId = repair.id
                                         initialRepairListRepairTitle = repair.title
                                         selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
                                     }
@@ -497,25 +835,13 @@ fun VehicleOverviewScreen(
 
                 item { SectionTitle("Szybkie akcje") }
                 item {
-                    QuickActionsGrid(
-                        onOpenRepairs = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs } },
-                        onOpenParts = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.PartsStorage } },
-                        onOpenDocs = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation } }
-                    )
+                    QuickAddRepairAction(onClick = { isQuickRepairActionOpen = true })
                 }
             }
             BottomNavBar(
                 items = bottomItems,
                 selectedItem = "Przeglad",
-                onSelect = { item ->
-                    selectedModule = when (item) {
-                        "Naprawy" -> vehicleModules.first { it.type == VehicleModuleType.Repairs }
-                        "Czesci" -> vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
-                        "Dokumenty" -> vehicleModules.first { it.type == VehicleModuleType.Documentation }
-                        "Wiecej" -> vehicleModules.first { it.type == VehicleModuleType.Status }
-                        else -> null
-                    }
-                },
+                onSelect = ::selectBottomItem,
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
@@ -529,7 +855,7 @@ private fun CarDashboardHeader(
     partsToBuy: Int,
 ) {
     GaragePanel {
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = vehicle.displayName.ifBlank { "BMW" },
                 fontSize = 24.sp,
@@ -541,11 +867,11 @@ private fun CarDashboardHeader(
             )
         }
         Image(
-            painter = painterResource(R.drawable.car_bmw_e61),
+            painter = painterResource(vehicle.detailImageResource()),
             contentDescription = vehicle.displayName.ifBlank { "BMW" },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(128.dp),
+                .height(210.dp),
             contentScale = ContentScale.Fit
         )
         Row(
@@ -588,48 +914,91 @@ private fun DashboardRepairRow(
                 fontSize = 12.sp
             )
         }
-        StatusBadge(repair.status.normalizedStatusLabel())
+        StatusBadge(repair.status.normalizedRepairStatusLabel())
         Text("›", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 22.sp)
     }
 }
 
 @Composable
-private fun QuickActionsGrid(
-    onOpenRepairs: () -> Unit,
-    onOpenParts: () -> Unit,
-    onOpenDocs: () -> Unit,
+private fun QuickAddRepairAction(
+    onClick: () -> Unit,
 ) {
-    val actions = listOf(
-        Triple("Dodaj\nnaprawe", AccentYellow, onOpenRepairs),
-        Triple("Dodaj\nczesc", AccentBlue, onOpenParts),
-        Triple("Dodaj\nnotatke", AccentGreen, onOpenDocs),
-        Triple("Dodaj\nzdjecie", AccentPurple, onOpenDocs)
-    )
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(4),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(84.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        userScrollEnabled = false
-    ) {
-        items(actions) { action ->
-            GaragePanel(onClick = action.third) {
+    GaragePanel(onClick = onClick) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(76.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(54.dp),
+                color = AccentYellow.copy(alpha = 0.18f),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "+",
+                        color = AccentYellow,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    text = "+",
-                    color = action.second,
-                    fontSize = 20.sp,
+                    text = "Dodaj naprawe",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = action.first,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
-                    fontSize = 11.sp,
-                    lineHeight = 13.sp
+                    text = "Importuj dokumentacje albo utworz nowy projekt naprawy.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.66f),
+                    fontSize = 12.sp,
+                    lineHeight = 15.sp
                 )
             }
         }
     }
+}
+
+@Composable
+private fun QuickRepairActionDialog(
+    onImportRepair: () -> Unit,
+    onAddRepair: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Dodaj naprawe") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                GaragePanel(onClick = onImportRepair) {
+                    Text("Importuj naprawe", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Wczytaj paczke naprawy z dokumentacja i lista czesci.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                        fontSize = 12.sp
+                    )
+                }
+                GaragePanel(onClick = onAddRepair) {
+                    Text("Dodaj naprawe", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Utworz nowy projekt i wybierz obszar auta.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
 }
 
 private fun RepairProject.areaColor(): Color = when (area) {
@@ -638,15 +1007,6 @@ private fun RepairProject.areaColor(): Color = when (area) {
     VehicleArea.Electronics -> AccentPurple
     VehicleArea.Body -> AccentGreen
     VehicleArea.Service -> AccentGreen
-}
-
-private fun String.isFinishedStatus(): Boolean = lowercase().contains("zakon")
-
-private fun String.normalizedStatusLabel(): String = when {
-    lowercase().contains("zakon") -> "Zakonczona"
-    lowercase().contains("plan") -> "Planowana"
-    lowercase().contains("trak") -> "W trakcie"
-    else -> this
 }
 
 private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
@@ -666,6 +1026,72 @@ private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
 private fun PartInventoryItem.belongsToRepair(repair: RepairProject): Boolean =
     repairId == repair.id || (repairId.isNullOrBlank() && repairTitle == repair.title)
 
+private fun ImportedRepairArchive.withRepairTitle(newTitle: String): ImportedRepairArchive =
+    copy(
+        repair = repair.copy(title = newTitle),
+        documentation = documentation.copy(
+            title = "Dokumentacja: $newTitle",
+            repairTitle = newTitle,
+            summary = documentation.summary.replace(repair.title, newTitle),
+            archivedShoppingList = documentation.archivedShoppingList.map { item ->
+                item.copy(repairTitle = newTitle)
+            }
+        ),
+        shoppingList = shoppingList.map { item ->
+            item.copy(repairTitle = newTitle)
+        }
+    )
+
+private fun String.hasSameRepairTitleAs(other: String): Boolean =
+    normalizedRepairTitleKey() == other.normalizedRepairTitleKey() &&
+        normalizedRepairTitleKey().isNotBlank()
+
+private fun List<RepairProject>.nextAvailableRepairTitle(baseTitle: String): String {
+    val cleanBaseTitle = baseTitle.trim().ifBlank { "Importowana naprawa" }
+    var index = 2
+    var candidate = "$cleanBaseTitle ($index)"
+    while (any { it.title.hasSameRepairTitleAs(candidate) }) {
+        index += 1
+        candidate = "$cleanBaseTitle ($index)"
+    }
+    return candidate
+}
+
+private fun String.normalizedRepairTitleKey(): String =
+    lowercase()
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+private fun List<RepairDocumentation>.withArchivedShoppingList(
+    repair: RepairProject,
+    archivedShoppingList: List<ShoppingListItem>,
+): List<RepairDocumentation> {
+    var wasUpdated = false
+    val updatedDocumentation = map { documentation ->
+        if (documentation.belongsToRepair(repair)) {
+            wasUpdated = true
+            documentation.copy(
+                archivedShoppingList = (documentation.archivedShoppingList + archivedShoppingList)
+                    .mergeArchivedShoppingItems(repair)
+            )
+        } else {
+            documentation
+        }
+    }
+    return if (wasUpdated) {
+        updatedDocumentation
+    } else {
+        updatedDocumentation + RepairDocumentation(
+            title = "Dokumentacja: ${repair.title}",
+            area = repair.area,
+            repairTitle = repair.title,
+            repairId = repair.id,
+            summary = "Dokumentacja powiazana z naprawa: ${repair.title}.",
+            archivedShoppingList = archivedShoppingList
+        )
+    }
+}
+
 private fun PartInventoryItem.toArchivedShoppingListItem(repair: RepairProject): ShoppingListItem =
     ShoppingListItem(
         id = id.ifBlank { "archived_${repair.id}_${partNumber}_${name}" },
@@ -682,6 +1108,69 @@ private fun PartInventoryItem.toArchivedShoppingListItem(repair: RepairProject):
         imageUri = photoUri,
         realOemUrl = realOemUrl
     )
+
+private fun List<ShoppingListItem>.mergeArchivedShoppingItems(repair: RepairProject): List<ShoppingListItem> =
+    mapIndexed { index, item -> item.archiveMergeKey(index) to item }
+        .groupBy(keySelector = { it.first }, valueTransform = { it.second })
+        .values
+        .map { items ->
+            val primary = items.bestArchivedShoppingItem()
+            primary.copy(
+                id = primary.id.ifBlank {
+                    "archived_${repair.id}_${primary.partNumber}_${primary.manufacturerPartNumber}_${primary.name}"
+                },
+                repairTitle = repair.title,
+                repairId = repair.id,
+                area = repair.area,
+                quantity = items.sumOf { it.quantity },
+                partNumber = primary.partNumber.ifBlank {
+                    items.firstNotNullOfOrNull { it.partNumber.takeIf(String::isNotBlank) }.orEmpty()
+                },
+                manufacturerPartNumber = primary.manufacturerPartNumber.ifBlank {
+                    items.firstNotNullOfOrNull { it.manufacturerPartNumber.takeIf(String::isNotBlank) }.orEmpty()
+                },
+                price = primary.price.ifBlank {
+                    items.firstNotNullOfOrNull { it.price.takeIf(String::isNotBlank) }.orEmpty()
+                },
+                imageUri = primary.imageUri ?: items.firstNotNullOfOrNull { it.imageUri },
+                shopUrl = primary.shopUrl ?: items.firstNotNullOfOrNull { it.shopUrl },
+                realOemUrl = primary.realOemUrl ?: items.firstNotNullOfOrNull { it.realOemUrl }
+            )
+        }
+
+private fun ShoppingListItem.archiveMergeKey(index: Int): String {
+    val explicitPartKey = listOf(
+        manufacturerPartNumber.normalizedArchivePartKey(),
+        partNumber.normalizedArchivePartKey()
+    ).firstOrNull { it.isUsableArchivePartKey() }
+    if (explicitPartKey != null) return "part_$explicitPartKey"
+    if (id.isNotBlank()) return "id_$id"
+    return "line_$index"
+}
+
+private fun List<ShoppingListItem>.bestArchivedShoppingItem(): ShoppingListItem =
+    maxBy { item ->
+        listOf(
+            item.source != "Magazyn",
+            item.shopUrl != null,
+            item.imageUri != null,
+            item.price.isNotBlank(),
+            item.manufacturerPartNumber.isNotBlank(),
+            item.partNumber.isNotBlank()
+        ).count { it }
+    }
+
+private fun String.normalizedArchivePartKey(): String =
+    lowercase()
+        .replace(Regex("[^a-z0-9]+"), "_")
+        .trim('_')
+
+private fun String.isUsableArchivePartKey(): Boolean =
+    isNotBlank() &&
+        this != "do_uzupelnienia" &&
+        this != "do_ustalenia" &&
+        this != "brak" &&
+        this != "unknown"
 
 private data class VehicleModule(
     val type: VehicleModuleType,

@@ -63,6 +63,17 @@ class PartInventoryStorage(context: Context) {
             .putString(vehicle.shoppingStorageKey(), array.toString())
             .apply()
     }
+
+    fun ensureVehicleData(vehicle: Vehicle) {
+        preferences.edit().apply {
+            if (!preferences.contains(vehicle.storageKey())) {
+                putString(vehicle.storageKey(), JSONArray().toString())
+            }
+            if (!preferences.contains(vehicle.shoppingStorageKey())) {
+                putString(vehicle.shoppingStorageKey(), JSONArray().toString())
+            }
+        }.apply()
+    }
 }
 
 private fun Vehicle.storageKey(): String {

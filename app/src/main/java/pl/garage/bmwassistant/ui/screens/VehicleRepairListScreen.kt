@@ -22,6 +22,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
@@ -32,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -83,6 +85,9 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -104,6 +109,8 @@ import pl.garage.bmwassistant.model.TorqueSpecTable
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.model.YoutubeVideo
+import pl.garage.bmwassistant.model.isFinishedRepairStatus
+import pl.garage.bmwassistant.model.normalizedRepairStatusLabel
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.AccentBlue
@@ -121,6 +128,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -132,7 +140,11 @@ fun VehicleRepairListScreen(
     repairDocumentation: List<RepairDocumentation>,
     inventoryParts: List<PartInventoryItem>,
     shoppingList: List<ShoppingListItem>,
+    initialRepairId: String? = null,
     initialRepairTitle: String? = null,
+    existingRepairTitles: Set<String> = repairs.map { it.title }.toSet(),
+    startAddRepairFlow: Boolean = false,
+    onStartAddRepairFlowConsumed: () -> Unit = {},
     onRepairAdded: (RepairProject, RepairDocumentation) -> Unit,
     onRepairUpdated: (RepairProject) -> Unit,
     onOpenDocumentation: (RepairDocumentation) -> Unit,
@@ -141,6 +153,8 @@ fun VehicleRepairListScreen(
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
+    onExportRepair: ((RepairProject) -> Unit)? = null,
+    onImportRepair: (() -> Unit)? = null,
     onInitialRepairClosed: () -> Unit = {},
     title: String = "Naprawy",
     selectedBottomItem: String = "Naprawy",
@@ -149,6 +163,9 @@ fun VehicleRepairListScreen(
     showGeneralDocumentationSection: Boolean = false,
     emptyText: String = "Brak aktywnych napraw. Zakonczone naprawy znajdziesz w Dokumentach.",
     onBack: () -> Unit,
+    onBottomSelect: (String) -> Unit = { item ->
+        if (item != selectedBottomItem) onBack()
+    },
 ) {
     val visibleRepairs = remember(repairs, showArchivedRepairs) {
         repairs.filter { repair ->
@@ -165,12 +182,21 @@ fun VehicleRepairListScreen(
     }
     var isChoosingRepairArea by remember { mutableStateOf(false) }
     var selectedAreaForNewRepair by remember { mutableStateOf<VehicleArea?>(null) }
-    var selectedRepair by remember(initialRepairTitle, repairs) {
+    var selectedRepair by remember(initialRepairId, initialRepairTitle, visibleRepairs) {
         mutableStateOf(
-            initialRepairTitle?.let { repairTitle ->
-                repairs.firstOrNull { it.title == repairTitle }
-            }
+            initialRepairId
+                ?.let { repairId -> visibleRepairs.firstOrNull { it.id == repairId } }
+                ?: initialRepairTitle?.let { repairTitle ->
+                    visibleRepairs.firstOrNull { it.title == repairTitle }
+                }
         )
+    }
+
+    LaunchedEffect(startAddRepairFlow) {
+        if (startAddRepairFlow && showAddRepairButton) {
+            isChoosingRepairArea = true
+            onStartAddRepairFlowConsumed()
+        }
     }
 
     BackHandler(enabled = selectedRepair != null) {
@@ -193,9 +219,17 @@ fun VehicleRepairListScreen(
             onAddShoppingItems = onAddShoppingItems,
             onShoppingListUpdated = onShoppingListUpdated,
             onInventoryPartAdded = onInventoryPartAdded,
+            onExportRepair = onExportRepair,
             onRepairUpdated = { updatedRepair ->
                 selectedRepair = updatedRepair
                 onRepairUpdated(updatedRepair)
+            },
+            bottomBar = {
+                RepairBottomNavBar(
+                    selectedBottomItem = selectedBottomItem,
+                    onSelect = onBottomSelect,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             },
             onBack = {
                 selectedRepair = null
@@ -219,6 +253,7 @@ fun VehicleRepairListScreen(
         AddRepairDialog(
             vehicle = vehicle,
             area = area,
+            existingRepairTitles = existingRepairTitles,
             onSave = { repair, documentation ->
                 onRepairAdded(repair, documentation)
                 expandedAreas = expandedAreas + area
@@ -259,7 +294,7 @@ fun VehicleRepairListScreen(
 
                 if (showGeneralDocumentationSection) {
                     item {
-                        GeneralDocumentationPanel()
+                        GeneralDocumentationPanel(onImportRepair = onImportRepair)
                     }
                     item {
                         Text(
@@ -309,6 +344,7 @@ fun VehicleRepairListScreen(
                                         ),
                                         showCompleteAction = false,
                                         onComplete = {},
+                                        onExport = onExportRepair?.let { export -> { export(repair) } },
                                         onClick = { selectedRepair = repair }
                                     )
                                 }
@@ -329,6 +365,7 @@ fun VehicleRepairListScreen(
                             onComplete = {
                                 onRepairUpdated(repair.copy(status = "Zakonczona"))
                             },
+                            onExport = null,
                             onClick = { selectedRepair = repair }
                         )
                     }
@@ -337,9 +374,7 @@ fun VehicleRepairListScreen(
             BottomNavBar(
                 items = bottomItems,
                 selectedItem = selectedBottomItem,
-                onSelect = { item ->
-                    if (item != selectedBottomItem) onBack()
-                },
+                onSelect = onBottomSelect,
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
@@ -347,7 +382,23 @@ fun VehicleRepairListScreen(
 }
 
 @Composable
-private fun GeneralDocumentationPanel() {
+private fun RepairBottomNavBar(
+    selectedBottomItem: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BottomNavBar(
+        items = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej"),
+        selectedItem = selectedBottomItem,
+        onSelect = onSelect,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun GeneralDocumentationPanel(
+    onImportRepair: (() -> Unit)?,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = "Dokumentacja ogolna",
@@ -366,6 +417,11 @@ private fun GeneralDocumentationPanel() {
                 fontSize = 13.sp,
                 lineHeight = 18.sp
             )
+            if (onImportRepair != null) {
+                TextButton(onClick = onImportRepair) {
+                    Text("Importuj naprawe z pliku")
+                }
+            }
         }
     }
 }
@@ -445,6 +501,7 @@ private fun RepairCard(
     partsCount: Int,
     showCompleteAction: Boolean,
     onComplete: () -> Unit,
+    onExport: (() -> Unit)?,
     onClick: () -> Unit,
 ) {
     GaragePanel(onClick = onClick) {
@@ -485,9 +542,14 @@ private fun RepairCard(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                StatusBadge(repair.status.normalizedRepairStatus())
+                StatusBadge(repair.status.normalizedRepairStatusLabel())
                 if (showCompleteAction) {
                     DoneRepairAction(onClick = onComplete)
+                }
+                if (onExport != null) {
+                    TextButton(onClick = onExport) {
+                        Text("Eksport")
+                    }
                 }
             }
         }
@@ -501,7 +563,7 @@ private fun RepairCard(
                 fontSize = 12.sp
             )
             Text(
-                text = "${documentation?.torqueSpecs?.size ?: 0} momentow",
+                text = "${documentation?.effectiveTorqueTables().orEmpty().sumOf { it.torqueSpecs.size }} momentow",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
                 fontSize = 12.sp
             )
@@ -629,12 +691,14 @@ private fun RepairAreaChoiceRow(
 private fun AddRepairDialog(
     vehicle: Vehicle,
     area: VehicleArea,
+    existingRepairTitles: Set<String>,
     onSave: (RepairProject, RepairDocumentation) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var repairTitle by remember { mutableStateOf("") }
     var repairNote by remember { mutableStateOf("") }
-    val canSave = repairTitle.isNotBlank()
+    val titleConflict = existingRepairTitles.any { it.hasSameRepairTitleAs(repairTitle) }
+    val canSave = repairTitle.isNotBlank() && !titleConflict
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -652,6 +716,13 @@ private fun AddRepairDialog(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = "np. Wymiana swiec"
                 )
+                if (titleConflict) {
+                    Text(
+                        text = "Naprawa o tej nazwie juz istnieje. Wpisz inna nazwe.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                }
                 GarageTextField(
                     value = repairNote,
                     onValueChange = { repairNote = it },
@@ -842,7 +913,9 @@ private fun RepairDetailsScreen(
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
+    onExportRepair: ((RepairProject) -> Unit)? = null,
     onRepairUpdated: (RepairProject) -> Unit,
+    bottomBar: (@Composable BoxScope.() -> Unit)? = null,
     onBack: () -> Unit,
 ) {
     var isCatalogVisible by remember { mutableStateOf(false) }
@@ -852,7 +925,9 @@ private fun RepairDetailsScreen(
         RealOemSchematicsDialog(
             vehicle = vehicle,
             repair = repair,
+            documentation = documentation,
             onAddShoppingItems = onAddShoppingItems,
+            onDocumentationUpdated = onDocumentationUpdated,
             onDismiss = { isCatalogVisible = false }
         )
     }
@@ -861,55 +936,76 @@ private fun RepairDetailsScreen(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                TextButton(onClick = onBack) {
-                    Text("‹ Naprawy")
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 18.dp,
+                    top = 18.dp,
+                    end = 18.dp,
+                    bottom = if (bottomBar == null) 18.dp else 96.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    TextButton(onClick = onBack) {
+                        Text("‹ Naprawy")
+                    }
                 }
-            }
-            item {
-                RepairDetailsHeader(repair)
-            }
-            item {
-                SegmentTabs(
-                    tabs = listOf("Opis", "Czesci", "Dokumentacja", "Momenty", "Notatki"),
-                    selectedTab = selectedTab,
-                    onSelect = { selectedTab = it }
-                )
-            }
-            when (selectedTab) {
-                "Opis" -> item {
-                    RepairOverviewTab(
-                        repair = repair,
-                        onRepairUpdated = onRepairUpdated
+                item {
+                    RepairDetailsHeader(repair)
+                }
+                item {
+                    SegmentTabs(
+                        tabs = listOf("Opis", "Czesci", "Dokumentacja", "Momenty", "Notatki"),
+                        selectedTab = selectedTab,
+                        onSelect = { selectedTab = it }
                     )
                 }
-                "Czesci" -> item {
-                    RepairPartsTab(
-                        repair = repair,
-                        availableParts = availableParts,
-                        shoppingItems = shoppingItems,
-                        allShoppingItems = allShoppingItems,
-                        isArchivedMode = isArchivedMode,
-                        onOpenShoppingList = { onOpenShoppingList(repair) },
-                        onOpenCatalog = { isCatalogVisible = true },
-                        onShoppingListUpdated = onShoppingListUpdated,
-                        onInventoryPartAdded = onInventoryPartAdded
-                    )
+                when (selectedTab) {
+                    "Opis" -> item {
+                        RepairOverviewTab(
+                            repair = repair,
+                            onRepairUpdated = onRepairUpdated
+                        )
+                    }
+                    "Czesci" -> item {
+                        RepairPartsTab(
+                            repair = repair,
+                            availableParts = availableParts,
+                            shoppingItems = shoppingItems,
+                            allShoppingItems = allShoppingItems,
+                            isArchivedMode = isArchivedMode,
+                            onOpenShoppingList = { onOpenShoppingList(repair) },
+                            onOpenCatalog = { isCatalogVisible = true },
+                            onShoppingListUpdated = onShoppingListUpdated,
+                            onInventoryPartAdded = onInventoryPartAdded
+                        )
+                    }
+                    "Dokumentacja" -> item {
+                        RepairDocumentsTab(
+                            documentation = documentation,
+                            onDocumentationUpdated = onDocumentationUpdated
+                        )
+                    }
+                    "Momenty" -> item {
+                        RepairTorqueTab(
+                            vehicle = vehicle,
+                            repair = repair,
+                            documentation = documentation,
+                            onDocumentationUpdated = onDocumentationUpdated
+                        )
+                    }
+                    "Notatki" -> item {
+                        RepairNotesTab(
+                            repair = repair,
+                            documentation = documentation,
+                            onDocumentationUpdated = onDocumentationUpdated
+                        )
+                    }
                 }
-                "Dokumentacja" -> item {
-                    RepairDocumentsTab(
-                        documentation = documentation,
-                        onDocumentationUpdated = onDocumentationUpdated
-                    )
-                }
-                "Momenty" -> item { RepairTorqueTab(documentation) }
-                "Notatki" -> item { RepairNotesTab(documentation) }
             }
+            bottomBar?.invoke(this)
         }
     }
 }
@@ -936,7 +1032,7 @@ private fun RepairDetailsHeader(repair: RepairProject) {
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
                 )
             }
-            StatusBadge(repair.status.normalizedRepairStatus())
+            StatusBadge(repair.status.normalizedRepairStatusLabel())
         }
     }
 }
@@ -2624,29 +2720,234 @@ private fun DocumentationEmptyMediaTile(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RepairTorqueTab(documentation: RepairDocumentation?) {
+private fun RepairTorqueTab(
+    vehicle: Vehicle,
+    repair: RepairProject,
+    documentation: RepairDocumentation?,
+    onDocumentationUpdated: (RepairDocumentation) -> Unit,
+) {
+    val context = LocalContext.current
     var mode by remember { mutableStateOf("Lista") }
     var selectedTorqueIndex by remember { mutableStateOf(0) }
     val tables = documentation?.effectiveTorqueTables().orEmpty()
-    val activeTable = tables.firstOrNull()
+    var selectedTableId by remember(documentation?.repairId, tables.size) {
+        mutableStateOf(tables.firstOrNull()?.id)
+    }
+    val activeTable = tables.firstOrNull { it.id == selectedTableId } ?: tables.firstOrNull()
+    var isChoosingTorqueAddType by remember { mutableStateOf(false) }
+    var isAddingTorqueSpecManually by remember { mutableStateOf(false) }
+    var torqueImportStatus by remember { mutableStateOf<String?>(null) }
+    var tablePendingDelete by remember { mutableStateOf<TorqueSpecTable?>(null) }
     val specs = activeTable?.torqueSpecs.orEmpty()
+
+    fun baseDocumentation(): RepairDocumentation =
+        documentation ?: RepairDocumentation(
+            title = "Dokumentacja: ${repair.title}",
+            area = repair.area,
+            repairTitle = repair.title,
+            repairId = repair.id,
+            summary = "Dokumentacja powiazana z naprawa: ${repair.title}."
+        )
+
+    fun ensureActiveTable(currentTables: List<TorqueSpecTable>): Pair<List<TorqueSpecTable>, TorqueSpecTable> {
+        val selectedTable = currentTables.firstOrNull { it.id == selectedTableId } ?: currentTables.firstOrNull()
+        if (selectedTable != null) return currentTables to selectedTable
+        val newTable = TorqueSpecTable(
+            id = "table-${System.currentTimeMillis()}",
+            title = "Tabela momentow 1"
+        )
+        selectedTableId = newTable.id
+        return listOf(newTable) to newTable
+    }
+
+    fun updateTorqueTables(updatedTables: List<TorqueSpecTable>) {
+        val cleanedTables = updatedTables.map { it.withoutEmptyTorqueSpecs() }
+        val updatedDocumentation = baseDocumentation().copy(
+            torqueTables = cleanedTables,
+            torqueSpecs = cleanedTables.firstOrNull()?.torqueSpecs.orEmpty(),
+            torqueDiagramImageUri = cleanedTables.firstOrNull()?.diagramImageUri,
+            torqueDiagramAssignments = cleanedTables.firstOrNull()?.diagramAssignments.orEmpty()
+        )
+        onDocumentationUpdated(updatedDocumentation)
+    }
+
+    fun updateActiveTorqueTable(transform: (TorqueSpecTable) -> TorqueSpecTable) {
+        val (currentTables, currentTable) = ensureActiveTable(baseDocumentation().effectiveTorqueTables())
+        updateTorqueTables(
+            currentTables.map { table ->
+                if (table.id == currentTable.id) transform(table) else table
+            }
+        )
+    }
+
+    fun importTorqueScreenshot(uri: Uri) {
+        val bitmap = loadDocumentationBitmapFromUri(context, uri)
+        if (bitmap == null) {
+            torqueImportStatus = "Nie udalo sie wczytac screenshotu."
+            return
+        }
+        torqueImportStatus = "Odczytuje screenshot TIS..."
+        recognizeTorqueSpecsFromBitmap(
+            bitmap = bitmap,
+            onResult = { importedSpecs ->
+                val cleanedImportedSpecs = importedSpecs.filter { it.isUsableTorqueSpec() }
+                if (cleanedImportedSpecs.isEmpty()) {
+                    torqueImportStatus = "Nie udalo sie rozpoznac wierszy tabeli. Sprobuj przyciac screenshot blizej tabeli."
+                } else {
+                    var addedCount = 0
+                    updateActiveTorqueTable { table ->
+                        val mergedSpecs = table.torqueSpecs.replaceOcrTorqueSpecs(cleanedImportedSpecs)
+                        addedCount = mergedSpecs.size - table.torqueSpecs.size
+                        table.copy(torqueSpecs = mergedSpecs)
+                    }
+                    torqueImportStatus = if (addedCount == 0) {
+                        "OCR rozpoznal wpisy, ale wszystkie byly juz w tej tabeli."
+                    } else {
+                        "Dodano $addedCount wpisow do aktualnej tabeli."
+                    }
+                }
+            },
+            onError = { message -> torqueImportStatus = message }
+        )
+    }
+
+    val torqueScreenshotLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            importTorqueScreenshot(uri)
+        }
+    }
+
+    if (isChoosingTorqueAddType) {
+        AddTorqueDataChoiceDialog(
+            tableTitle = activeTable?.title ?: "Tabela momentow 1",
+            onManual = {
+                isChoosingTorqueAddType = false
+                isAddingTorqueSpecManually = true
+            },
+            onScreenshot = {
+                isChoosingTorqueAddType = false
+                torqueScreenshotLauncher.launch("image/*")
+            },
+            onDismiss = { isChoosingTorqueAddType = false }
+        )
+    }
+
+    if (isAddingTorqueSpecManually) {
+        AddTorqueSpecDialog(
+            onDismiss = { isAddingTorqueSpecManually = false },
+            onSave = { spec ->
+                updateActiveTorqueTable { table ->
+                    table.copy(torqueSpecs = table.torqueSpecs + spec)
+                }
+                torqueImportStatus = "Dodano reczny wpis do aktualnej tabeli."
+                isAddingTorqueSpecManually = false
+            }
+        )
+    }
+
+    tablePendingDelete?.let { table ->
+        AlertDialog(
+            onDismissRequest = { tablePendingDelete = null },
+            title = { Text("Usun schemat momentow?") },
+            text = {
+                Text(
+                    text = "Schemat \"${table.title}\" oraz jego tabela momentow zostana usuniete z tej naprawy."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val updatedTables = tables.filterNot { it.id == table.id }
+                        selectedTableId = updatedTables.firstOrNull()?.id
+                        selectedTorqueIndex = 0
+                        updateTorqueTables(updatedTables)
+                        torqueImportStatus = "Usunieto schemat momentow."
+                        tablePendingDelete = null
+                    }
+                ) {
+                    Text("Usun")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { tablePendingDelete = null }) {
+                    Text("Anuluj")
+                }
+            }
+        )
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SegmentTabs(
             tabs = listOf("Lista", "Szczegoly"),
             selectedTab = mode,
             onSelect = { mode = it }
         )
+        if (tables.isNotEmpty()) {
+            TorqueTableSelector(
+                tables = tables,
+                selectedTableId = activeTable?.id,
+                onSelect = {
+                    selectedTableId = it.id
+                    selectedTorqueIndex = 0
+                },
+                onDelete = { tablePendingDelete = it }
+            )
+        }
         if (mode == "Lista") {
             TorqueDiagramListView(
+                vehicle = vehicle,
                 table = activeTable,
                 specs = specs,
                 selectedTorqueIndex = selectedTorqueIndex.coerceIn(0, (specs.size - 1).coerceAtLeast(0)),
-                onSelectTorque = { selectedTorqueIndex = it }
+                onSelectTorque = { selectedTorqueIndex = it },
+                onAssignmentAdded = { assignment ->
+                    updateActiveTorqueTable { table ->
+                        table.copy(diagramAssignments = table.diagramAssignments.upsertAssignment(assignment))
+                    }
+                },
+                onAssignmentRemoved = { torqueSpecIndex ->
+                    updateActiveTorqueTable { table ->
+                        table.copy(
+                            diagramAssignments = table.diagramAssignments
+                                .filterNot { it.torqueSpecIndex == torqueSpecIndex }
+                        )
+                    }
+                }
             )
         } else {
-            TorqueDetailsTable(specs = specs)
+            TorqueDetailsTable(
+                vehicle = vehicle,
+                specs = specs,
+                onSpecUpdated = { index, updatedSpec ->
+                    updateActiveTorqueTable { table ->
+                        table.copy(
+                            torqueSpecs = table.torqueSpecs.mapIndexed { specIndex, spec ->
+                                if (specIndex == index) updatedSpec else spec
+                            }
+                        )
+                    }
+                    torqueImportStatus = "Zapisano zmiany w rekordzie."
+                },
+                onSpecDeleted = { index ->
+                    updateActiveTorqueTable { table ->
+                        table.copy(
+                            torqueSpecs = table.torqueSpecs.filterIndexed { specIndex, _ -> specIndex != index },
+                            diagramAssignments = table.diagramAssignments.afterTorqueSpecRemoved(index)
+                        )
+                    }
+                    selectedTorqueIndex = selectedTorqueIndex.coerceAtMost((specs.size - 2).coerceAtLeast(0))
+                    torqueImportStatus = "Usunieto rekord z aktualnej tabeli."
+                }
+            )
         }
-        GaragePanel {
+        torqueImportStatus?.let { status ->
+            GaragePanel {
+                Text(status, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f))
+            }
+        }
+        GaragePanel(onClick = if (mode == "Szczegoly") ({ isChoosingTorqueAddType = true }) else null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2654,7 +2955,11 @@ private fun RepairTorqueTab(documentation: RepairDocumentation?) {
             ) {
                 Text("+", color = AccentBlue, fontSize = 24.sp, fontWeight = FontWeight.Medium)
                 Text(
-                    text = if (mode == "Lista") "Zmien schemat" else "Import ze screenshotu lub dodaj recznie",
+                    text = if (mode == "Lista") {
+                        "Dodaj schemat z zakladki Czesci przez dlugie przytrzymanie obrazu schematu."
+                    } else {
+                        "Dodaj dane do tabeli: recznie albo ze screenshota TIS"
+                    },
                     color = AccentBlue,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -2664,16 +2969,153 @@ private fun RepairTorqueTab(documentation: RepairDocumentation?) {
 }
 
 @Composable
+private fun AddTorqueDataChoiceDialog(
+    tableTitle: String,
+    onManual: () -> Unit,
+    onScreenshot: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Dodaj dane do tabeli") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = tableTitle,
+                    fontWeight = FontWeight.SemiBold
+                )
+                GaragePanel(onClick = onManual) {
+                    Text("Dodaj recznie", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Wpisz element, moment, gwint, zrodlo i notatki dla aktualnego schematu.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                }
+                GaragePanel(onClick = onScreenshot) {
+                    Text("Import ze screenshota", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Wybierz screenshot tabeli TIS. Wpisy trafia tylko do tej tabeli momentow.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun TorqueTableSelector(
+    tables: List<TorqueSpecTable>,
+    selectedTableId: String?,
+    onSelect: (TorqueSpecTable) -> Unit,
+    onDelete: (TorqueSpecTable) -> Unit,
+) {
+    GaragePanel {
+        Text("Schematy momentow", fontWeight = FontWeight.SemiBold)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            tables.forEachIndexed { index, table ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(table) },
+                    color = if (table.id == selectedTableId) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                    } else {
+                        MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${index + 1}",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(table.title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(
+                                text = "${table.torqueSpecs.size} momentow",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                                fontSize = 12.sp
+                            )
+                        }
+                        TextButton(onClick = { onDelete(table) }) {
+                            Text("Usun")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TorqueDiagramListView(
+    vehicle: Vehicle,
     table: TorqueSpecTable?,
     specs: List<TorqueSpec>,
     selectedTorqueIndex: Int,
     onSelectTorque: (Int) -> Unit,
+    onAssignmentAdded: (TorqueDiagramAssignment) -> Unit,
+    onAssignmentRemoved: (Int) -> Unit,
 ) {
+    var isDiagramActionVisible by remember { mutableStateOf(false) }
+    var isDiagramEditVisible by remember { mutableStateOf(false) }
     val assignments = table?.diagramAssignments.orEmpty()
         .filter { it.torqueSpecIndex in specs.indices }
-        .ifEmpty { defaultTorqueAssignments(specs.size) }
     val selectedSpec = specs.getOrNull(selectedTorqueIndex)
+    val vehicleCodes = remember(vehicle) { vehicle.torqueModelCodes() }
+    val allDetailRows = selectedSpec?.displayDetailRows().orEmpty()
+    val vehicleRows = allDetailRows
+        .filter { row -> vehicleCodes.any { code -> row.type.contains(code, ignoreCase = true) } }
+
+    if (isDiagramActionVisible) {
+        AlertDialog(
+            onDismissRequest = { isDiagramActionVisible = false },
+            title = { Text("Schemat momentow") },
+            text = {
+                GaragePanel(onClick = {
+                    isDiagramActionVisible = false
+                    isDiagramEditVisible = true
+                }) {
+                    Text("Nanies momenty", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Wybierz rekord i kliknij miejsce na schemacie.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { isDiagramActionVisible = false }) {
+                    Text("Anuluj")
+                }
+            }
+        )
+    }
+
+    if (isDiagramEditVisible) {
+        TorqueDiagramEditDialog(
+            imageUri = table?.diagramImageUri,
+            specs = specs,
+            assignments = assignments,
+            selectedTorqueIndex = selectedTorqueIndex,
+            onSelectTorque = onSelectTorque,
+            onAssignmentAdded = onAssignmentAdded,
+            onAssignmentRemoved = onAssignmentRemoved,
+            onDismiss = { isDiagramEditVisible = false }
+        )
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TorqueDiagramPreview(
@@ -2681,7 +3123,8 @@ private fun TorqueDiagramListView(
             assignments = assignments,
             specs = specs,
             selectedTorqueIndex = selectedTorqueIndex,
-            onSelectTorque = onSelectTorque
+            onSelectTorque = onSelectTorque,
+            onLongClick = { isDiagramActionVisible = true }
         )
 
         if (specs.isEmpty()) {
@@ -2689,7 +3132,7 @@ private fun TorqueDiagramListView(
                 EmptyDocumentationText("Brak zapisanych momentow dla tej naprawy.")
             }
         } else {
-            specs.take(4).forEachIndexed { index, spec ->
+            specs.forEachIndexed { index, spec ->
                 TorquePointRow(
                     index = index,
                     spec = spec,
@@ -2701,14 +3144,26 @@ private fun TorqueDiagramListView(
 
         GaragePanel {
             Text("Informacja", fontWeight = FontWeight.SemiBold)
-            Text(
-                text = if (selectedSpec == null) {
-                    "Momenty dokrecania zgodnie z TIS. Zawsze sprawdzaj aktualne dane techniczne."
-                } else {
-                    "${selectedSpec.component}: ${selectedSpec.torque}. ${selectedSpec.notes.ifBlank { "Sprawdz zrodlo przed montazem." }}"
-                },
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
-            )
+            if (selectedSpec == null) {
+                Text(
+                    text = "Momenty dokrecania zgodnie z TIS. Zawsze sprawdzaj aktualne dane techniczne.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
+            } else if (vehicleRows.isNotEmpty()) {
+                Text(
+                    text = "Pasujace do auta: ${vehicleCodes.joinToString(", ")}",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                TorqueSpecDetailsGrid(rows = vehicleRows, vehicleCodes = vehicleCodes)
+            } else {
+                Text(
+                    text = "Brak wariantu dopasowanego do modelu auta. Ponizej pelne dane rekordu.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
+                TorqueSpecDetailsGrid(rows = allDetailRows, vehicleCodes = vehicleCodes)
+            }
         }
     }
 }
@@ -2720,10 +3175,11 @@ private fun TorqueDiagramPreview(
     specs: List<TorqueSpec>,
     selectedTorqueIndex: Int,
     onSelectTorque: (Int) -> Unit,
+    onLongClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val bitmap = remember(imageUri) {
-        imageUri?.let { loadBitmapFromUri(context, Uri.parse(it)) }
+    val bitmap by produceState<Bitmap?>(initialValue = null, imageUri) {
+        value = imageUri?.let { loadBitmapFromDiagramSource(context, it) }
     }
 
     BoxWithConstraints(
@@ -2731,13 +3187,18 @@ private fun TorqueDiagramPreview(
             .fillMaxWidth()
             .height(260.dp)
             .clip(RoundedCornerShape(8.dp))
+            .combinedClickable(
+                onClick = {},
+                onLongClick = onLongClick
+            )
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
     ) {
         val diagramWidth = maxWidth
         val diagramHeight = maxHeight
-        if (bitmap != null) {
+        val diagramBitmap = bitmap
+        if (diagramBitmap != null) {
             Image(
-                bitmap = bitmap.asImageBitmap(),
+                bitmap = diagramBitmap.asImageBitmap(),
                 contentDescription = "Schemat momentow dokrecania",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit
@@ -2784,6 +3245,208 @@ private fun TorqueDiagramPreview(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun TorqueDiagramEditDialog(
+    imageUri: String?,
+    specs: List<TorqueSpec>,
+    assignments: List<TorqueDiagramAssignment>,
+    selectedTorqueIndex: Int,
+    onSelectTorque: (Int) -> Unit,
+    onAssignmentAdded: (TorqueDiagramAssignment) -> Unit,
+    onAssignmentRemoved: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(initialValue = null, imageUri) {
+        value = imageUri?.let { loadBitmapFromDiagramSource(context, it) }
+    }
+    val selectedSpec = specs.getOrNull(selectedTorqueIndex)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nanies momenty") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Wybierz rekord i kliknij miejsce na schemacie.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+                TorqueSpecSelector(
+                    specs = specs,
+                    selectedTorqueIndex = selectedTorqueIndex,
+                    onSelectTorque = onSelectTorque
+                )
+                val diagramBitmap = bitmap
+                if (diagramBitmap == null) {
+                    EmptyDocumentationText("Brak obrazu schematu do edycji.")
+                } else {
+                    EditableTorqueDiagramImage(
+                        bitmap = diagramBitmap,
+                        assignments = assignments,
+                        specs = specs,
+                        selectedTorqueIndex = selectedTorqueIndex,
+                        onTap = { tap ->
+                            if (selectedTorqueIndex in specs.indices) {
+                                onAssignmentAdded(
+                                    TorqueDiagramAssignment(
+                                        torqueSpecIndex = selectedTorqueIndex,
+                                        xRatio = tap.x.coerceIn(0f, 1f),
+                                        yRatio = tap.y.coerceIn(0f, 1f)
+                                    )
+                                )
+                            }
+                        }
+                    )
+                }
+                selectedSpec?.let { spec ->
+                    Text(
+                        text = "Aktywny rekord: ${spec.component} / ${spec.torque}",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                assignments
+                    .filter { it.torqueSpecIndex in specs.indices }
+                    .sortedBy { it.torqueSpecIndex }
+                    .let { savedAssignments ->
+                        if (savedAssignments.isEmpty()) {
+                            Text(
+                                text = "Brak naniesionych punktow dla tego schematu.",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                                fontSize = 12.sp
+                            )
+                        } else {
+                            savedAssignments.forEach { assignment ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${assignment.torqueSpecIndex + 1}. ${specs[assignment.torqueSpecIndex].component}",
+                                        modifier = Modifier.weight(1f),
+                                        fontSize = 12.sp,
+                                        maxLines = 1
+                                    )
+                                    TextButton(onClick = { onAssignmentRemoved(assignment.torqueSpecIndex) }) {
+                                        Text("Usun")
+                                    }
+                                }
+                            }
+                        }
+                    }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Zakoncz")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Zamknij")
+            }
+        }
+    )
+}
+
+@Composable
+private fun TorqueSpecSelector(
+    specs: List<TorqueSpec>,
+    selectedTorqueIndex: Int,
+    onSelectTorque: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        specs.forEachIndexed { index, spec ->
+            val selected = index == selectedTorqueIndex
+            Surface(
+                modifier = Modifier.clickable { onSelectTorque(index) },
+                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .width(190.dp)
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text("${index + 1}. ${spec.component}", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 2)
+                    Text(spec.torque, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditableTorqueDiagramImage(
+    bitmap: Bitmap,
+    assignments: List<TorqueDiagramAssignment>,
+    specs: List<TorqueSpec>,
+    selectedTorqueIndex: Int,
+    onTap: (Offset) -> Unit,
+) {
+    val aspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.White)
+            .pointerInput(selectedTorqueIndex, bitmap) {
+                detectTapGestures { offset ->
+                    val width = size.width.toFloat().coerceAtLeast(1f)
+                    val height = size.height.toFloat().coerceAtLeast(1f)
+                    onTap(Offset(offset.x / width, offset.y / height))
+                }
+            }
+    ) {
+        val diagramWidth = maxWidth
+        val diagramHeight = diagramWidth / aspectRatio
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(diagramHeight)
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Schemat momentow dokrecania",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.FillBounds
+            )
+            assignments
+                .filter { it.torqueSpecIndex in specs.indices }
+                .forEach { assignment ->
+                    val selected = assignment.torqueSpecIndex == selectedTorqueIndex
+                    Surface(
+                        modifier = Modifier
+                            .offset(
+                                x = (diagramWidth * assignment.xRatio) - 14.dp,
+                                y = (diagramHeight * assignment.yRatio) - 14.dp
+                            )
+                            .size(if (selected) 32.dp else 28.dp),
+                        color = if (selected) AccentBlue else AccentBlue.copy(alpha = 0.82f),
+                        shape = CircleShape
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "${assignment.torqueSpecIndex + 1}",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
         }
     }
 }
@@ -2864,48 +3527,363 @@ private fun TorquePointRow(
 }
 
 @Composable
-private fun TorqueDetailsTable(specs: List<TorqueSpec>) {
+private fun TorqueDetailsTable(
+    vehicle: Vehicle,
+    specs: List<TorqueSpec>,
+    onSpecUpdated: (Int, TorqueSpec) -> Unit,
+    onSpecDeleted: (Int) -> Unit,
+) {
+    var specPendingDetails by remember { mutableStateOf<RepairTorqueSpecEditTarget?>(null) }
+    var specPendingEdit by remember { mutableStateOf<RepairTorqueSpecEditTarget?>(null) }
+
+    specPendingDetails?.let { target ->
+        TorqueSpecDetailsDialog(
+            vehicle = vehicle,
+            spec = target.spec,
+            onDismiss = { specPendingDetails = null },
+            onEdit = {
+                specPendingDetails = null
+                specPendingEdit = target
+            }
+        )
+    }
+
+    specPendingEdit?.let { target ->
+        AddTorqueSpecDialog(
+            initialSpec = target.spec,
+            onDismiss = { specPendingEdit = null },
+            onSave = { updatedSpec ->
+                onSpecUpdated(target.index, updatedSpec)
+                specPendingEdit = null
+            },
+            onDelete = {
+                onSpecDeleted(target.index)
+                specPendingEdit = null
+            }
+        )
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         GaragePanel {
             Text("Pelna tabela dokrecen", fontWeight = FontWeight.SemiBold)
             if (specs.isEmpty()) {
                 EmptyDocumentationText("Brak zapisanych momentow.")
             } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ID",
+                        modifier = Modifier.width(34.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Nazwa elementu",
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Moment",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 specs.forEachIndexed { index, spec ->
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${index + 1}. ${spec.component}",
-                                modifier = Modifier.weight(1f),
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 2
-                            )
-                            Text(spec.torque, color = AccentBlue, fontWeight = FontWeight.SemiBold)
-                        }
-                        val details = listOf(
-                            spec.type,
-                            spec.thread,
-                            spec.tighteningSpecifications,
-                            spec.source,
-                            spec.notes
-                        ).filter { it.isNotBlank() }
-                        if (details.isNotEmpty()) {
-                            Text(
-                                text = details.joinToString(" / "),
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-                                fontSize = 12.sp
-                            )
-                        }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { specPendingDetails = RepairTorqueSpecEditTarget(index, spec) }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${index + 1}",
+                            modifier = Modifier.width(34.dp),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.74f),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = spec.component,
+                            modifier = Modifier.weight(1f),
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2
+                        )
+                        Text(
+                            text = spec.torque,
+                            color = AccentBlue,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
             }
         }
     }
 }
+
+@Composable
+private fun TorqueSpecDetailsDialog(
+    vehicle: Vehicle,
+    spec: TorqueSpec,
+    onDismiss: () -> Unit,
+    onEdit: (() -> Unit)? = null,
+) {
+    val detailRows = remember(spec) { spec.displayDetailRows() }
+    val vehicleCodes = remember(vehicle) { vehicle.torqueModelCodes() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(spec.component) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                TorqueSpecDetailLine("Moment", spec.torque)
+                TorqueSpecDetailsGrid(
+                    rows = detailRows,
+                    vehicleCodes = vehicleCodes
+                )
+                TorqueSpecDetailLine("Zrodlo", spec.source)
+                val plainNotes = spec.notes.takeUnless { it.startsWith("OCR_ROWS\n") }.orEmpty()
+                TorqueSpecDetailLine("Uwagi", plainNotes)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Zamknij")
+            }
+        },
+        dismissButton = {
+            if (onEdit != null) {
+                TextButton(onClick = onEdit) {
+                    Text("Edytuj")
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun TorqueSpecDetailsGrid(
+    rows: List<TorqueDetailDisplayRow>,
+    vehicleCodes: Set<String>,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            TorqueGridHeader("Typ", Modifier.weight(1.1f))
+            TorqueGridHeader("Gwint", Modifier.weight(0.72f))
+            TorqueGridHeader("Specyfikacja", Modifier.weight(1.25f))
+            TorqueGridHeader("Moment", Modifier.weight(0.72f))
+        }
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.background.copy(alpha = 0.34f),
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                TorqueGridCell(
+                    text = row.type,
+                    modifier = Modifier.weight(1.1f),
+                    highlightedCodes = vehicleCodes
+                )
+                TorqueGridCell(row.thread, Modifier.weight(0.72f))
+                TorqueGridCell(row.tighteningSpecifications, Modifier.weight(1.25f))
+                TorqueGridCell(row.torque, Modifier.weight(0.72f), emphasize = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TorqueGridHeader(
+    text: String,
+    modifier: Modifier,
+) {
+    Text(
+        text = text,
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.primary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold
+    )
+}
+
+@Composable
+private fun TorqueGridCell(
+    text: String,
+    modifier: Modifier,
+    highlightedCodes: Set<String> = emptySet(),
+    emphasize: Boolean = false,
+) {
+    val value = text.ifBlank { "-" }
+    val highlightRanges = highlightedCodes
+        .flatMap { code ->
+            Regex("\\b${Regex.escape(code)}\\b", RegexOption.IGNORE_CASE)
+                .findAll(value)
+                .map { it.range }
+                .toList()
+        }
+        .sortedBy { it.first }
+    val styledText = buildAnnotatedString {
+        var cursor = 0
+        highlightRanges.forEach { range ->
+            if (range.first > cursor) {
+                append(value.substring(cursor, range.first))
+            }
+            withStyle(
+                SpanStyle(
+                    color = Color.White,
+                    background = AccentBlue.copy(alpha = 0.42f),
+                    fontWeight = FontWeight.Bold
+                )
+            ) {
+                append(value.substring(range.first, range.last + 1))
+            }
+            cursor = range.last + 1
+        }
+        if (cursor < value.length) {
+            append(value.substring(cursor))
+        }
+    }
+    Text(
+        text = styledText,
+        modifier = modifier,
+        color = if (emphasize) AccentBlue else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.74f),
+        fontSize = 12.sp,
+        fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Normal,
+        lineHeight = 15.sp
+    )
+}
+
+@Composable
+private fun TorqueSpecDetailLine(
+    label: String,
+    value: String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = value.ifBlank { "-" },
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.76f)
+        )
+    }
+}
+
+private data class TorqueDetailDisplayRow(
+    val type: String,
+    val thread: String,
+    val tighteningSpecifications: String,
+    val torque: String,
+)
+
+private data class RepairTorqueSpecEditTarget(
+    val index: Int,
+    val spec: TorqueSpec,
+)
+
+private fun TorqueSpec.displayDetailRows(): List<TorqueDetailDisplayRow> =
+    ocrDetailRows().ifEmpty {
+        listOf(
+            TorqueDetailDisplayRow(
+                type = type,
+                thread = thread,
+                tighteningSpecifications = tighteningSpecifications,
+                torque = torque
+            )
+        )
+    }
+
+private fun TorqueSpec.ocrDetailRows(): List<TorqueDetailDisplayRow> {
+    if (!notes.startsWith("OCR_ROWS\n")) return emptyList()
+    return runCatching {
+        val array = org.json.JSONArray(notes.removePrefix("OCR_ROWS\n"))
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                add(
+                    TorqueDetailDisplayRow(
+                        type = item.optString("type"),
+                        thread = item.optString("thread"),
+                        tighteningSpecifications = item.optString("tighteningSpecifications"),
+                        torque = item.optString("torque")
+                    )
+                )
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun Vehicle.torqueModelCodes(): Set<String> =
+    listOf(displayName, model, generation)
+        .flatMap { source ->
+            Regex("\\b[EGF]\\d{2}\\b", RegexOption.IGNORE_CASE)
+                .findAll(source)
+                .map { it.value.uppercase() }
+                .toList()
+        }
+        .toSet()
+
+private fun List<TorqueDiagramAssignment>.upsertAssignment(
+    assignment: TorqueDiagramAssignment,
+): List<TorqueDiagramAssignment> =
+    filterNot { it.torqueSpecIndex == assignment.torqueSpecIndex } + assignment
+
+private fun List<TorqueDiagramAssignment>.afterTorqueSpecRemoved(
+    removedIndex: Int,
+): List<TorqueDiagramAssignment> =
+    mapNotNull { assignment ->
+        when {
+            assignment.torqueSpecIndex == removedIndex -> null
+            assignment.torqueSpecIndex > removedIndex -> assignment.copy(
+                torqueSpecIndex = assignment.torqueSpecIndex - 1
+            )
+            else -> assignment
+        }
+    }
+
+private fun TorqueSpecTable.withoutEmptyTorqueSpecs(): TorqueSpecTable {
+    val indexMap = mutableMapOf<Int, Int>()
+    val cleanedSpecs = torqueSpecs.mapIndexedNotNull { oldIndex, spec ->
+        if (spec.isUsableTorqueSpec()) {
+            indexMap[oldIndex] = indexMap.size
+            spec
+        } else {
+            null
+        }
+    }
+    val cleanedAssignments = diagramAssignments.mapNotNull { assignment ->
+        val newIndex = indexMap[assignment.torqueSpecIndex] ?: return@mapNotNull null
+        assignment.copy(torqueSpecIndex = newIndex)
+    }
+    return copy(
+        torqueSpecs = cleanedSpecs,
+        diagramAssignments = cleanedAssignments
+    )
+}
+
+private fun TorqueSpec.isUsableTorqueSpec(): Boolean =
+    component.trim().isNotBlank() &&
+        torque.trim().isNotBlank() &&
+        component.trim() != "-" &&
+        torque.trim() != "-"
 
 private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
     torqueTables.ifEmpty {
@@ -2950,6 +3928,15 @@ private fun loadBitmapFromUri(context: android.content.Context, uri: Uri): Bitma
     runCatching {
         context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
     }.getOrNull()
+
+private suspend fun loadBitmapFromDiagramSource(context: Context, source: String): Bitmap? =
+    if (source.startsWith("http://") || source.startsWith("https://")) {
+        loadBitmapFromUrl(source)
+    } else {
+        withContext(Dispatchers.IO) {
+            loadBitmapFromUri(context, Uri.parse(source))
+        }
+    }
 
 @Composable
 private fun PersonalMediaGalleryDialog(
@@ -3231,6 +4218,32 @@ private suspend fun loadBitmapFromUrl(url: String): Bitmap? =
         }.getOrNull()
     }
 
+private suspend fun saveTorqueDiagramImageLocally(
+    context: Context,
+    imageUrl: String,
+    repairId: String,
+    tableTitle: String,
+): String? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val directory = File(context.filesDir, "torque_diagrams/$repairId")
+            directory.mkdirs()
+            val fileName = buildString {
+                append(System.currentTimeMillis())
+                append("-")
+                append(tableTitle.catalogKey().replace(Regex("[^a-z0-9]+"), "-").trim('-'))
+                append(".jpg")
+            }
+            val destination = File(directory, fileName)
+            URL(imageUrl).openStream().use { input ->
+                destination.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            Uri.fromFile(destination).toString()
+        }.getOrNull()
+    }
+
 private suspend fun loadVideoThumbnail(context: Context, uri: Uri): Bitmap? =
     withContext(Dispatchers.IO) {
         runCatching {
@@ -3354,32 +4367,48 @@ private fun PersonalDocumentationItemType.defaultDocumentationTitle(): String = 
 }
 
 @Composable
-private fun RepairNotesTab(documentation: RepairDocumentation?) {
-    val notes = documentation?.personalNotes.orEmpty()
+private fun RepairNotesTab(
+    repair: RepairProject,
+    documentation: RepairDocumentation?,
+    onDocumentationUpdated: (RepairDocumentation) -> Unit,
+) {
+    var noteText by remember(documentation?.repairId) {
+        mutableStateOf(documentation?.userNotes.orEmpty())
+    }
     GaragePanel {
         Text("Notatki", fontWeight = FontWeight.SemiBold)
-        if (notes.isEmpty()) {
-            Text(
-                text = "Brak notatek przypisanych do tej naprawy.",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            GarageTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                label = "Twoje notatki",
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = "Wpisz uwagi z naprawy, objawy, numery czesci albo rzeczy do sprawdzenia...",
+                singleLine = false,
+                minLines = 8
             )
-        } else {
-            notes.forEach { note ->
-                Text(note.title, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = {
+                        val baseDocumentation = documentation ?: RepairDocumentation(
+                            title = "Dokumentacja: ${repair.title}",
+                            area = repair.area,
+                            repairTitle = repair.title,
+                            repairId = repair.id,
+                            summary = "Dokumentacja powiazana z naprawa: ${repair.title}."
+                        )
+                        onDocumentationUpdated(baseDocumentation.copy(userNotes = noteText.trim()))
+                    }
+                ) {
+                    Text("Zapisz notatki")
+                }
             }
         }
     }
 }
-
-private fun String.normalizedRepairStatus(): String = when {
-    lowercase().contains("zakon") -> "Zakonczona"
-    lowercase().contains("plan") -> "Planowana"
-    lowercase().contains("trak") -> "W trakcie"
-    else -> this
-}
-
-private fun String.isFinishedRepairStatus(): Boolean =
-    lowercase().contains("zakon")
 
 private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
     repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
@@ -3389,6 +4418,15 @@ private fun PartInventoryItem.belongsToRepair(repair: RepairProject): Boolean =
 
 private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
     repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
+
+private fun String.hasSameRepairTitleAs(other: String): Boolean =
+    normalizedRepairTitleKey() == other.normalizedRepairTitleKey() &&
+        normalizedRepairTitleKey().isNotBlank()
+
+private fun String.normalizedRepairTitleKey(): String =
+    lowercase()
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
 private fun List<ShoppingListItem>.afterReceiving(
     receivedItem: ShoppingListItem,
@@ -3525,9 +4563,12 @@ private data class RepairIndexedYoutubeVideo(
 private fun RealOemSchematicsDialog(
     vehicle: Vehicle,
     repair: RepairProject,
+    documentation: RepairDocumentation?,
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
+    onDocumentationUpdated: (RepairDocumentation) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var diagrams by remember { mutableStateOf(emptyList<RealOemDiagram>()) }
     var selectedDiagram by remember { mutableStateOf<RealOemDiagram?>(null) }
@@ -3537,7 +4578,9 @@ private fun RealOemSchematicsDialog(
     var isLoadingDiagrams by remember { mutableStateOf(false) }
     var isLoadingParts by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var isSavingTorqueDiagram by remember { mutableStateOf(false) }
     var diagramSearchQuery by remember { mutableStateOf("") }
+    var diagramPendingTorqueMove by remember { mutableStateOf<RealOemDiagramDetails?>(null) }
     val filteredDiagrams = remember(diagrams, diagramSearchQuery) {
         val query = diagramSearchQuery.catalogKey()
         if (query.isBlank()) {
@@ -3616,6 +4659,54 @@ private fun RealOemSchematicsDialog(
         partPendingLookup = null
     }
 
+    fun moveDiagramToTorqueSection(details: RealOemDiagramDetails) {
+        val imageUrl = details.imageUrl ?: return
+        coroutineScope.launch {
+            isSavingTorqueDiagram = true
+            message = "Zapisuje schemat lokalnie..."
+            val baseDocumentation = documentation ?: RepairDocumentation(
+                title = "Dokumentacja: ${repair.title}",
+                area = repair.area,
+                repairTitle = repair.title,
+                repairId = repair.id,
+                summary = "Dokumentacja powiazana z naprawa: ${repair.title}."
+            )
+            val currentTables = baseDocumentation.effectiveTorqueTables()
+            val tableTitle = translateRealOemLabel(details.title)
+                .ifBlank { "Schemat momentow ${currentTables.size + 1}" }
+            val alreadyExists = currentTables.any { table ->
+                table.diagramImageUri == imageUrl ||
+                    table.title.catalogKey() == tableTitle.catalogKey()
+            }
+            if (alreadyExists) {
+                onDocumentationUpdated(baseDocumentation.copy(torqueTables = currentTables))
+                message = "Ten schemat jest juz w sekcji momenty."
+            } else {
+                val localImageUri = saveTorqueDiagramImageLocally(
+                    context = context,
+                    imageUrl = imageUrl,
+                    repairId = repair.id,
+                    tableTitle = tableTitle
+                )
+                if (localImageUri == null) {
+                    message = "Nie udalo sie zapisac schematu lokalnie. Sprawdz polaczenie i sprobuj ponownie."
+                } else {
+                    val newTable = TorqueSpecTable(
+                        id = "czescidobmw-torque-${System.currentTimeMillis()}",
+                        title = tableTitle,
+                        diagramImageUri = localImageUri,
+                        torqueSpecs = emptyList(),
+                        diagramAssignments = emptyList()
+                    )
+                    onDocumentationUpdated(baseDocumentation.copy(torqueTables = currentTables + newTable))
+                    message = "Schemat zapisany lokalnie i przeniesiony do sekcji momenty."
+                }
+            }
+            isSavingTorqueDiagram = false
+            diagramPendingTorqueMove = null
+        }
+    }
+
     partPendingLookup?.let { part ->
         RealOemPartLookupDialog(
             part = part,
@@ -3623,6 +4714,14 @@ private fun RealOemSchematicsDialog(
                 addLookupPartToShoppingList(part, lookup, quantity)
             },
             onDismiss = { partPendingLookup = null }
+        )
+    }
+
+    diagramPendingTorqueMove?.let { details ->
+        MoveDiagramToTorqueDialog(
+            diagramTitle = translateRealOemLabel(details.title),
+            onConfirm = { moveDiagramToTorqueSection(details) },
+            onDismiss = { diagramPendingTorqueMove = null }
         )
     }
 
@@ -3699,6 +4798,9 @@ private fun RealOemSchematicsDialog(
                     message?.let { text ->
                         RealOemInfoRow(text)
                     }
+                    if (isSavingTorqueDiagram) {
+                        RealOemInfoRow("Zapis lokalnej kopii schematu...")
+                    }
                     if (isLoadingParts) {
                         RealOemInfoRow("Pobieram schemat i liste czesci...")
                     }
@@ -3706,7 +4808,8 @@ private fun RealOemSchematicsDialog(
                         details.imageUrl?.let { imageUrl ->
                             RealOemDiagramImage(
                                 imageUrl = imageUrl,
-                                maxImageHeight = 300
+                                maxImageHeight = 300,
+                                onLongClick = { diagramPendingTorqueMove = details }
                             )
                         } ?: RealOemInfoRow("Nie znaleziono obrazu dla tego schematu.")
                         Text(
@@ -3738,6 +4841,39 @@ private fun RealOemSchematicsDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("Zamknij")
+            }
+        }
+    )
+}
+
+@Composable
+private fun MoveDiagramToTorqueDialog(
+    diagramTitle: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Schemat momentow") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = diagramTitle.ifBlank { "Wybrany schemat" },
+                    fontWeight = FontWeight.SemiBold
+                )
+                GaragePanel(onClick = onConfirm) {
+                    Text("Przenies schemat do sekcji momenty", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Ten obraz stanie sie osobna sekcja momentow dokrecania dla tej naprawy.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
             }
         }
     )
@@ -4046,9 +5182,11 @@ private fun RealOemInfoRow(text: String) {
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun RealOemDiagramImage(
     imageUrl: String,
     maxImageHeight: Int = 300,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val bitmap by produceState<Bitmap?>(initialValue = null, imageUrl) {
         value = withContext(Dispatchers.IO) {
@@ -4082,6 +5220,10 @@ private fun RealOemDiagramImage(
                 .heightIn(max = maxImageHeight.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .background(Color.White)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = onLongClick
+                )
                 .transformable(transformState),
             contentAlignment = Alignment.TopCenter
         ) {

@@ -1,9 +1,15 @@
 package pl.garage.bmwassistant.ui.screens
 
+import android.annotation.SuppressLint
+import android.view.MotionEvent
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -25,9 +31,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -46,53 +57,79 @@ fun VehicleStatusScreen(
     vehicle: Vehicle,
     activeRepairAreas: Set<VehicleArea>,
     onBack: () -> Unit,
+    bottomBar: (@Composable BoxScope.() -> Unit)? = null,
 ) {
+    var isVinDecoderOpen by rememberSaveable { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            item {
-                TextButton(onClick = onBack) {
-                    Text("Wroc do auta")
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 18.dp,
+                    top = 18.dp,
+                    end = 18.dp,
+                    bottom = if (bottomBar == null) 18.dp else 96.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item {
+                    TextButton(onClick = onBack) {
+                        Text("Wroc do auta")
+                    }
+                }
+
+                item {
+                    Header(
+                        title = "Stan auta",
+                        subtitle = vehicle.displayName.ifBlank { "Profil auta" }
+                    )
+                }
+
+                item {
+                    VehicleFactsCard(
+                        vehicle = vehicle,
+                        isVinDecoderOpen = isVinDecoderOpen,
+                        onToggleVinDecoder = { isVinDecoderOpen = !isVinDecoderOpen }
+                    )
+                }
+
+                item {
+                    SectionTitle("Kategorie")
+                }
+
+                item {
+                    VehicleAreaGrid(
+                        areas = VehicleArea.entries,
+                        activeRepairAreas = activeRepairAreas
+                    )
+                }
+
+                item {
+                    QuickScanCard()
+                }
+
+                item {
+                    AppInfoCard()
                 }
             }
-
-            item {
-                Header(
-                    title = "Stan auta",
-                    subtitle = vehicle.displayName.ifBlank { "Profil auta" }
-                )
-            }
-
-            item {
-                VehicleFactsCard(vehicle = vehicle)
-            }
-
-            item {
-                SectionTitle("Kategorie")
-            }
-
-            item {
-                VehicleAreaGrid(
-                    areas = VehicleArea.entries,
-                    activeRepairAreas = activeRepairAreas
-                )
-            }
-
-            item {
-                QuickScanCard()
-            }
+            bottomBar?.invoke(this)
         }
     }
 }
 
 @Composable
-private fun VehicleFactsCard(vehicle: Vehicle) {
+private fun VehicleFactsCard(
+    vehicle: Vehicle,
+    isVinDecoderOpen: Boolean,
+    onToggleVinDecoder: () -> Unit,
+) {
+    val cleanVin = vehicle.vin.cleanVin()
+    val hasValidVin = cleanVin.length == 17
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -112,10 +149,84 @@ private fun VehicleFactsCard(vehicle: Vehicle) {
             Text("Przebieg: ${vehicle.mileage.ifBlank { "do uzupelnienia" }}")
             Text("VIN: ${vehicle.vin.ifBlank { "do uzupelnienia" }}")
             Text(
-                text = "Dane mozna wpisac recznie. Pobieranie przez OBD / BimmerTool dodamy pozniej.",
+                text = "Dane mozna wpisac recznie. Dekoder VIN korzysta z bimmer.work i wymaga internetu.",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
             )
+            Button(
+                onClick = onToggleVinDecoder,
+                enabled = hasValidVin,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (isVinDecoderOpen) "Ukryj dekoder VIN" else "Dekoduj VIN")
+            }
+            if (!hasValidVin) {
+                Text(
+                    text = "Wpisz pelny VIN auta, 17 znakow, aby uruchomic dekoder.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                    fontSize = 13.sp
+                )
+            }
+            if (isVinDecoderOpen && hasValidVin) {
+                VinDecoderWebView(vin = cleanVin)
+            }
         }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun VinDecoderWebView(vin: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(620.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF07121A))
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    isVerticalScrollBarEnabled = true
+                    isHorizontalScrollBarEnabled = true
+                    overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+                    setOnTouchListener { view, event ->
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                        if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
+                            view.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                        false
+                    }
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String) {
+                            view.evaluateJavascript(
+                                """
+                                    (function() {
+                                      var vin = "$vin";
+                                      var input = document.querySelector('input[name="vin"], input[id="vin"], input[type="text"], input:not([type])');
+                                      if (input) {
+                                        input.value = vin;
+                                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                      }
+                                    })();
+                                """.trimIndent(),
+                                null
+                            )
+                        }
+                    }
+                    loadUrl("https://bimmer.work/")
+                }
+            },
+            update = { webView ->
+                if (webView.url.isNullOrBlank()) {
+                    webView.loadUrl("https://bimmer.work/")
+                }
+            }
+        )
     }
 }
 
@@ -241,6 +352,34 @@ private fun QuickScanCard() {
         }
     }
 }
+
+@Composable
+private fun AppInfoCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Informacje o aplikacji",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text("Wersja pre alfa aplikacji BMW Garage Helper")
+            Text("Aplikacja zawiera błędy")
+            Text("Błędy proszę zgłaszać na wątku grupie facebook")
+            Text("Autor Jędrzej Czapracki")
+        }
+    }
+}
+
+private fun String.cleanVin(): String =
+    filter { it.isLetterOrDigit() }.uppercase()
 
 @Preview(showBackground = true, widthDp = 430)
 @Composable

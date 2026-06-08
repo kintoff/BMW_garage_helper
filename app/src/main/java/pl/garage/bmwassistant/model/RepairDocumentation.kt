@@ -15,6 +15,7 @@ data class RepairDocumentation(
     val youtubeLinks: List<String> = emptyList(),
     val youtubeVideos: List<YoutubeVideo> = emptyList(),
     val personalNotes: List<PersonalDocumentationItem> = emptyList(),
+    val userNotes: String = "",
     val repairId: String = stableRepairId(
         title = repairTitle,
         area = area,

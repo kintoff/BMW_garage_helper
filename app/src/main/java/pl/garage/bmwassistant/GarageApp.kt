@@ -9,6 +9,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import pl.garage.bmwassistant.data.PartInventoryStorage
+import pl.garage.bmwassistant.data.RepairProjectStorage
 import pl.garage.bmwassistant.data.VehicleStorage
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.ui.screens.AddVehicleWizard
@@ -20,6 +22,8 @@ import pl.garage.bmwassistant.ui.screens.VehicleOverviewScreen
 fun GarageApp() {
     val context = LocalContext.current
     val vehicleStorage = remember { VehicleStorage(context.applicationContext) }
+    val repairStorage = remember { RepairProjectStorage(context.applicationContext) }
+    val partStorage = remember { PartInventoryStorage(context.applicationContext) }
     val vehicles = remember {
         mutableStateListOf<Vehicle>().apply {
             addAll(vehicleStorage.loadVehicles())
@@ -65,6 +69,8 @@ fun GarageApp() {
         isAddingVehicle -> AddVehicleWizard(
             onVehicleCreated = { vehicle ->
                 vehicles.add(vehicle)
+                repairStorage.ensureVehicleData(vehicle)
+                partStorage.ensureVehicleData(vehicle)
                 vehicleStorage.saveVehicles(vehicles)
                 isAddingVehicle = false
             },
@@ -76,7 +82,10 @@ fun GarageApp() {
             onAddVehicle = { isAddingVehicle = true },
             onOpenVehicle = { selectedVehicle = it },
             onCopyVehicle = { vehicle ->
-                vehicles.add(vehicle.copyAsDuplicate())
+                val duplicatedVehicle = vehicle.copyAsDuplicate()
+                vehicles.add(duplicatedVehicle)
+                repairStorage.ensureVehicleData(duplicatedVehicle)
+                partStorage.ensureVehicleData(duplicatedVehicle)
                 vehicleStorage.saveVehicles(vehicles)
             },
             onDeleteVehicle = { vehiclePendingDeletion = it }

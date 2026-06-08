@@ -48,3 +48,30 @@ Pierwszy profil testowy:
 5. Uruchom aplikacje na emulatorze albo na Galaxy S23 Ultra przez USB.
 
 Pierwsza synchronizacja Gradle moze pobrac zaleznosci z internetu.
+
+## Aktualizacja APK poza Google Play
+
+Aplikacja ma teraz wbudowany mechanizm sprawdzania nowej wersji z `GitHub Releases`.
+
+Jak to dziala:
+
+- ekran `Moj garaz` sprawdza najnowszy release w repozytorium,
+- gdy znajdzie nowsza wersje, pokazuje przycisk pobrania,
+- APK pobiera sie do cache aplikacji,
+- po pobraniu aplikacja uruchamia systemowy instalator Androida,
+- na Androidzie instalacja nadal wymaga potwierdzenia uzytkownika.
+
+Konfiguracja:
+
+1. Repo aktualizacji jest ustawione na:
+   - `kintoff/BMW_garage_helper`
+2. Publikuj nowe wersje jako `GitHub Release`.
+3. Do release dodawaj plik `.apk` jako asset.
+4. `tag_name` release powinien odpowiadac `versionName`, np. `v0.2.0`.
+5. Kazde wydanie APK musi byc podpisane tym samym kluczem i miec rosnacy `versionCode`.
+
+Uwagi:
+
+- obecna implementacja zaklada publiczne `GitHub Releases`,
+- dla prywatnego repo trzeba bedzie dodac osobna warstwe autoryzacji albo posredni endpoint,
+- najlepszy format wydania to jeden release = jeden APK do instalacji.

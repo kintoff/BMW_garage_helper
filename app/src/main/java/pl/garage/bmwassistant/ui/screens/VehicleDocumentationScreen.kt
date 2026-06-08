@@ -79,6 +79,8 @@ import pl.garage.bmwassistant.model.TorqueSpecTable
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.model.YoutubeVideo
+import pl.garage.bmwassistant.model.isFinishedRepairStatus
+import pl.garage.bmwassistant.model.normalizedRepairStatusLabel
 import pl.garage.bmwassistant.ui.components.AccentBlue
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
@@ -521,7 +523,7 @@ private fun RepairDocumentationDetailsScreen(
                 } else {
                     var addedCount = 0
                     updateTorqueTable(tableId) { table ->
-                        val mergedTorqueSpecs = table.torqueSpecs.mergeTorqueSpecs(torqueSpecs)
+                        val mergedTorqueSpecs = table.torqueSpecs.replaceOcrTorqueSpecs(torqueSpecs)
                         addedCount = mergedTorqueSpecs.size - table.torqueSpecs.size
                         table.copy(torqueSpecs = mergedTorqueSpecs)
                     }
@@ -558,11 +560,36 @@ private fun RepairDocumentationDetailsScreen(
                 )
             }
             activeDiagramImportTableId?.let { tableId ->
-                updateTorqueTable(tableId) { table ->
-                    table.copy(
-                        diagramImageUri = uri.toString(),
-                        diagramAssignments = emptyList()
+                val localDiagramUri = copyTorqueDiagramToAppStorage(
+                    context = context,
+                    sourceUri = uri,
+                    repairId = documentation.repairId,
+                    tableId = tableId
+                ) ?: uri.toString()
+                val currentTables = documentation.effectiveTorqueTables()
+                val currentTable = currentTables.firstOrNull { it.id == tableId }
+                val shouldCreateNewTable = currentTable != null &&
+                    (
+                        currentTable.diagramImageUri != null ||
+                            currentTable.torqueSpecs.isNotEmpty() ||
+                            currentTable.diagramAssignments.isNotEmpty()
                     )
+                if (shouldCreateNewTable) {
+                    val newTable = TorqueSpecTable(
+                        id = "table-${System.currentTimeMillis()}",
+                        title = "${currentTable.title} - nowy schemat",
+                        diagramImageUri = localDiagramUri
+                    )
+                    updateTorqueTables(currentTables + newTable)
+                    expandedTorqueTableIds = expandedTorqueTableIds + newTable.id
+                    selectedDiagramTorqueByTable = selectedDiagramTorqueByTable + (newTable.id to null)
+                } else {
+                    updateTorqueTable(tableId) { table ->
+                        table.copy(
+                            diagramImageUri = localDiagramUri,
+                            diagramAssignments = emptyList()
+                        )
+                    }
                 }
             }
         }
@@ -1621,7 +1648,7 @@ private fun AddTorqueTableDialog(
 }
 
 @Composable
-private fun AddTorqueSpecDialog(
+fun AddTorqueSpecDialog(
     initialSpec: TorqueSpec? = null,
     onDismiss: () -> Unit,
     onSave: (TorqueSpec) -> Unit,
@@ -3611,12 +3638,73 @@ private suspend fun fetchYoutubeTitle(videoUrl: String): String? =
         }.getOrNull()
     }
 
-private fun List<TorqueSpec>.mergeTorqueSpecs(importedSpecs: List<TorqueSpec>): List<TorqueSpec> {
-    val existingKeys = map { it.stableTorqueKey() }.toMutableSet()
-    val newSpecs = importedSpecs.filter { importedSpec ->
-        existingKeys.add(importedSpec.stableTorqueKey())
+fun List<TorqueSpec>.mergeTorqueSpecs(importedSpecs: List<TorqueSpec>): List<TorqueSpec> {
+    val existingKeys = mutableSetOf<String>()
+    return (this + importedSpecs)
+        .collapseOcrContinuationSpecs()
+        .filter { spec -> existingKeys.add(spec.stableTorqueKey()) }
+}
+
+fun List<TorqueSpec>.replaceOcrTorqueSpecs(importedSpecs: List<TorqueSpec>): List<TorqueSpec> {
+    val manualSpecs = filterNot { it.source.equals("TIS screenshot", ignoreCase = true) }
+    return manualSpecs.mergeTorqueSpecs(importedSpecs)
+}
+
+private fun List<TorqueSpec>.collapseOcrContinuationSpecs(): List<TorqueSpec> {
+    val collapsed = mutableListOf<TorqueSpec>()
+    var activeBlock = mutableListOf<TorqueSpec>()
+
+    fun flushBlock() {
+        if (activeBlock.isNotEmpty()) {
+            collapsed += activeBlock.mergeOcrBlock()
+            activeBlock = mutableListOf()
+        }
     }
-    return this + newSpecs
+
+    forEach { spec ->
+        val isOcr = spec.source.equals("TIS screenshot", ignoreCase = true)
+        when {
+            isOcr && spec.component.containsAzComponent() -> {
+                flushBlock()
+                activeBlock += spec
+            }
+            isOcr && activeBlock.isNotEmpty() -> {
+                activeBlock += spec
+            }
+            else -> {
+                flushBlock()
+                collapsed += spec
+            }
+        }
+    }
+    flushBlock()
+
+    return collapsed
+}
+
+private fun List<TorqueSpec>.mergeOcrBlock(): TorqueSpec {
+    val firstSpec = first()
+    if (size == 1) return firstSpec
+    return firstSpec.copy(
+        type = flatMap { spec -> listOf(spec.type, spec.component.takeUnless { it.containsAzComponent() }.orEmpty()) }
+            .map { it.normalizeTorqueCell() }
+            .filter { it.isMeaningfulTorqueDetail() }
+            .distinct()
+            .joinToString(" / "),
+        thread = map { it.thread.normalizeTorqueCell() }
+            .filter { it.isMeaningfulTorqueDetail() }
+            .distinct()
+            .joinToString(" / "),
+        tighteningSpecifications = map { it.tighteningSpecifications.normalizeTorqueCell() }
+            .filter { it.isMeaningfulTorqueDetail() }
+            .distinct()
+            .joinToString(" / "),
+        torque = flatMap { spec ->
+            torqueRegex.findAll(spec.torque)
+                .map { it.value.standardizeTorqueText() }
+                .toList()
+        }.distinct().joinToString(" / ")
+    )
 }
 
 private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
@@ -3771,7 +3859,7 @@ private fun List<TorqueDiagramAssignment>.afterTorqueSpecRemoved(
         }
     }
 
-private fun recognizeTorqueSpecsFromBitmap(
+fun recognizeTorqueSpecsFromBitmap(
     bitmap: Bitmap,
     onResult: (List<TorqueSpec>) -> Unit,
     onError: (String) -> Unit,
@@ -3786,7 +3874,7 @@ private fun recognizeTorqueSpecsFromBitmap(
         }
 }
 
-private fun loadDocumentationBitmapFromUri(context: Context, uri: Uri): Bitmap? =
+fun loadDocumentationBitmapFromUri(context: Context, uri: Uri): Bitmap? =
     runCatching {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri))
@@ -3794,6 +3882,24 @@ private fun loadDocumentationBitmapFromUri(context: Context, uri: Uri): Bitmap? 
             @Suppress("DEPRECATION")
             MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
         }
+    }.getOrNull()
+
+private fun copyTorqueDiagramToAppStorage(
+    context: Context,
+    sourceUri: Uri,
+    repairId: String,
+    tableId: String,
+): String? =
+    runCatching {
+        val directory = File(context.filesDir, "torque_diagrams/$repairId")
+        directory.mkdirs()
+        val destination = File(directory, "${System.currentTimeMillis()}-$tableId.jpg")
+        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            destination.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: return@runCatching null
+        Uri.fromFile(destination).toString()
     }.getOrNull()
 
 private fun parseTorqueSpecsFromRecognizedText(recognizedText: MlKitText): List<TorqueSpec> {
@@ -3829,56 +3935,43 @@ private fun parseTorqueSpecsFromPositionedLines(recognizedText: MlKitText): List
     if (tableLines.isEmpty()) return emptyList()
 
     val columnGuide = TorqueColumnGuide.from(headerLines, tableLines)
-    val rowGroups = tableLines.groupIntoVisualRows()
-    var activeComponent = ""
+    val visualRows = tableLines.groupIntoVisualRows()
+        .map { row ->
+            OcrTorqueRow(
+                columns = row.toTorqueColumns(columnGuide),
+                rawText = row.joinToString(" ") { it.text }.normalizeTorqueCell()
+            )
+        }
+        .filter { row ->
+            row.rawText.isNotBlank() ||
+                listOf(
+                    row.columns.component,
+                    row.columns.type,
+                    row.columns.thread,
+                    row.columns.tighteningSpecifications,
+                    row.columns.torque
+                ).any { it.isNotBlank() }
+        }
 
-    return buildList {
-        rowGroups.forEach { row ->
-            if (row.size == 1 && row.first().text.containsAzComponent() && torqueRegex.containsMatchIn(row.first().text)) {
-                addAll(parseTorqueBlock(listOf(row.first().text)))
-                activeComponent = extractTorqueComponent(row.first().text)
-                return@forEach
-            }
-
-            val columns = row.toTorqueColumns(columnGuide)
-            val component = columns.component.ifBlank { activeComponent }
-            if (columns.component.isNotBlank()) {
-                activeComponent = columns.component
-            }
-            if (component.isBlank()) return@forEach
-
-            val torqueValues = torqueRegex.findAll(columns.torque)
-                .map { it.value.standardizeTorqueText() }
-                .toList()
-                .ifEmpty {
-                    torqueRegex.findAll(row.joinToString(" ") { it.text })
-                        .map { it.value.standardizeTorqueText() }
-                        .toList()
+    val blocks = buildList {
+        var currentBlock = mutableListOf<OcrTorqueRow>()
+        visualRows.forEach { row ->
+            if (row.rawText.containsAzMarker()) {
+                if (currentBlock.isNotEmpty()) {
+                    add(currentBlock.toList())
                 }
-
-            torqueValues.forEach { torque ->
-                add(
-                    TorqueSpec(
-                        component = component,
-                        type = columns.type.normalizeTorqueCell(),
-                        thread = columns.thread.normalizeTorqueCell(),
-                        tighteningSpecifications = columns.tighteningSpecifications.normalizeTorqueCell(),
-                        torque = torque,
-                        source = "TIS screenshot",
-                        notes = ""
-                    )
-                )
+                currentBlock = mutableListOf(row)
+            } else if (currentBlock.isNotEmpty()) {
+                currentBlock.add(row)
             }
         }
-    }.distinctBy { spec ->
-        listOf(
-            spec.component.normalizeForTorqueKey(),
-            spec.type.normalizeForTorqueKey(),
-            spec.thread.normalizeForTorqueKey(),
-            spec.tighteningSpecifications.normalizeForTorqueKey(),
-            spec.torque.normalizeForTorqueKey()
-        ).joinToString("|")
+        if (currentBlock.isNotEmpty()) {
+            add(currentBlock.toList())
+        }
     }
+
+    return blocks.mapNotNull { block -> block.toTorqueSpecFromOcrRows() }
+        .distinctBy { it.stableTorqueKey() }
 }
 
 private fun parseTorqueSpecsFromText(rawText: String): List<TorqueSpec> {
@@ -3892,7 +3985,7 @@ private fun parseTorqueSpecsFromText(rawText: String): List<TorqueSpec> {
     val blocks = buildList {
         var currentBlock = mutableListOf<String>()
         lines.forEach { line ->
-            if (line.containsAzComponent()) {
+            if (line.containsAzMarker()) {
                 if (currentBlock.isNotEmpty()) {
                     add(currentBlock.toList())
                 }
@@ -3906,64 +3999,41 @@ private fun parseTorqueSpecsFromText(rawText: String): List<TorqueSpec> {
         }
     }
 
-    return blocks.flatMap(::parseTorqueBlock)
+    return blocks.mapNotNull(::parseTorqueBlock)
 }
 
-private fun parseTorqueBlock(block: List<String>): List<TorqueSpec> {
-    if (block.isEmpty()) return emptyList()
+private fun parseTorqueBlock(block: List<String>): TorqueSpec? {
+    if (block.isEmpty()) return null
 
     val firstLine = block.first()
     val component = extractTorqueComponent(firstLine)
-    val firstLineRemainder = firstLine
-        .removePrefix(component)
-        .trim()
+    if (component.isBlank()) return null
 
-    val pendingTypeLines = mutableListOf<String>()
-    val specs = mutableListOf<TorqueSpec>()
+    val details = block.joinToString(" ") { line ->
+        line.removePrefix(component)
+            .replace(torqueRegex, "")
+            .normalizeTorqueCell()
+    }.normalizeTorqueCell()
 
-    listOf(firstLineRemainder)
-        .plus(block.drop(1))
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .forEach { line ->
-            val torqueValues = torqueRegex.findAll(line)
-                .map { it.value.standardizeTorqueText() }
-                .toList()
-            val lineWithoutTorque = line
-                .replace(torqueRegex, "")
-                .replace(Regex("\\s+"), " ")
-                .trim()
+    val torques = block.flatMap { line ->
+        torqueRegex.findAll(line)
+            .map { match -> match.value.standardizeTorqueText() }
+            .toList()
+    }.distinct()
 
-            if (torqueValues.isEmpty()) {
-                if (lineWithoutTorque.isMeaningfulTorqueDetail()) {
-                    pendingTypeLines.add(lineWithoutTorque)
-                }
-            } else {
-                if (lineWithoutTorque.isMeaningfulTorqueDetail()) {
-                    pendingTypeLines.add(lineWithoutTorque)
-                }
-                val type = pendingTypeLines.joinToString(" ")
-                    .replace(Regex("\\s*/\\s*"), " / ")
-                    .trim()
-                torqueValues.forEach { torque ->
-                    specs.add(
-                        TorqueSpec(
-                            component = component,
-                            type = type,
-                            torque = torque,
-                            source = "TIS screenshot",
-                            notes = ""
-                        )
-                    )
-                }
-                pendingTypeLines.clear()
-            }
-        }
+    if (torques.isEmpty()) return null
 
-    return specs
+    return TorqueSpec(
+        component = component,
+        type = details,
+        torque = torques.joinToString(" / "),
+        source = "TIS screenshot",
+        notes = ""
+    )
 }
 
 private val torqueRegex = Regex("\\b\\d+(?:[,.]\\d+)?\\s*N\\s*m\\b", RegexOption.IGNORE_CASE)
+private val threadRegex = Regex("\\b(?:M\\d+\\s*x\\s*\\d+|M\\d+|Banjo bolt\\s*M\\d+\\s*x?\\s*\\d*)\\b", RegexOption.IGNORE_CASE)
 
 private data class OcrTorqueLine(
     val text: String,
@@ -4018,6 +4088,175 @@ private data class TorqueRowColumns(
     val tighteningSpecifications: String,
     val torque: String,
 )
+
+private data class OcrTorqueRow(
+    val columns: TorqueRowColumns,
+    val rawText: String,
+)
+
+private data class TorqueDetailRow(
+    val type: String,
+    val thread: String,
+    val tighteningSpecifications: String,
+    val torque: String,
+)
+
+private fun parseTorqueDetailRowFromText(
+    rawText: String,
+    component: String,
+    fallbackType: String,
+    fallbackThread: String,
+    fallbackTightening: String,
+): TorqueDetailRow {
+    val rowWithoutComponent = rawText
+        .removePrefix(component)
+        .replace(torqueRegex, "")
+        .normalizeTorqueCell()
+    val source = rowWithoutComponent.ifBlank {
+        listOf(fallbackType, fallbackThread, fallbackTightening)
+            .joinToString(" ")
+            .normalizeTorqueCell()
+    }
+    val threadMatch = threadRegex.find(source)
+    val type = if (threadMatch == null) {
+        fallbackType.normalizeTorqueCell().ifBlank { source }
+    } else {
+        source.substring(0, threadMatch.range.first).normalizeTorqueCell()
+    }
+    val thread = threadMatch?.value?.normalizeTorqueCell()
+        ?: fallbackThread.normalizeTorqueCell()
+    val tighteningFromThread = if (threadMatch == null) {
+        fallbackTightening.replace(torqueRegex, "").normalizeTorqueCell()
+    } else {
+        source.substring(threadMatch.range.last + 1)
+            .replace(torqueRegex, "")
+            .normalizeTorqueCell()
+            .ifBlank { fallbackTightening.replace(torqueRegex, "").normalizeTorqueCell() }
+    }
+    val splitType = type.splitTypeAndTighteningLeak()
+    val tightening = listOf(splitType.second, tighteningFromThread)
+        .filter { it.isMeaningfulTorqueDetail() }
+        .joinToString(" ")
+        .normalizeTorqueCell()
+
+    return TorqueDetailRow(
+        type = splitType.first,
+        thread = thread,
+        tighteningSpecifications = tightening,
+        torque = ""
+    )
+}
+
+private fun String.splitTypeAndTighteningLeak(): Pair<String, String> {
+    val markers = listOf(
+        "Blue union screw",
+        "connection in steel",
+        "connection in aluminium",
+        "brake hose",
+        "hydraulic control unit"
+    )
+    val markerIndex = markers
+        .mapNotNull { marker ->
+            indexOf(marker, ignoreCase = true).takeIf { it >= 0 }
+        }
+        .minOrNull()
+    if (markerIndex == null) return normalizeTorqueCell() to ""
+    return substring(0, markerIndex).normalizeTorqueCell() to
+        substring(markerIndex).normalizeTorqueCell()
+}
+
+private fun List<TorqueDetailRow>.toTorqueDetailNotes(): String =
+    if (isEmpty()) {
+        ""
+    } else {
+        "OCR_ROWS\n" + JSONArray().apply {
+            forEach { row ->
+                put(
+                    JSONObject()
+                        .put("type", row.type)
+                        .put("thread", row.thread)
+                        .put("tighteningSpecifications", row.tighteningSpecifications)
+                        .put("torque", row.torque)
+                )
+            }
+        }.toString()
+    }
+
+private fun List<OcrTorqueRow>.toTorqueSpecFromOcrRows(): TorqueSpec? {
+    if (isEmpty()) return null
+    val firstRow = first()
+    val component = extractTorqueComponent(
+        firstRow.columns.component.ifBlank { firstRow.rawText }
+    ).normalizeTorqueCell()
+    if (!component.containsAzComponent()) return null
+
+    val detailRows = mutableListOf<TorqueDetailRow>()
+    forEach { row ->
+        val columns = row.columns
+        val torqueValues = torqueRegex.findAll(columns.torque)
+            .map { match -> match.value.standardizeTorqueText() }
+            .toList()
+            .ifEmpty {
+                torqueRegex.findAll(row.rawText)
+                    .map { match -> match.value.standardizeTorqueText() }
+                    .toList()
+            }
+
+        val parsedRow = parseTorqueDetailRowFromText(
+            rawText = row.rawText,
+            component = component,
+            fallbackType = columns.type,
+            fallbackThread = columns.thread,
+            fallbackTightening = columns.tighteningSpecifications
+        )
+
+        if (torqueValues.isNotEmpty()) {
+            detailRows += TorqueDetailRow(
+                type = parsedRow.type,
+                thread = parsedRow.thread,
+                tighteningSpecifications = parsedRow.tighteningSpecifications,
+                torque = torqueValues.joinToString(" / ")
+            )
+        } else if (detailRows.isNotEmpty()) {
+            val last = detailRows.removeAt(detailRows.lastIndex)
+            detailRows += last.copy(
+                type = listOf(last.type, parsedRow.type)
+                    .filter { it.isMeaningfulTorqueDetail() }
+                    .joinToString(" ")
+                    .normalizeTorqueCell(),
+                tighteningSpecifications = listOf(last.tighteningSpecifications, parsedRow.tighteningSpecifications)
+                    .filter { it.isMeaningfulTorqueDetail() }
+                    .joinToString(" ")
+                    .normalizeTorqueCell()
+            )
+        }
+    }
+
+    val cleanedRows = detailRows
+        .filter { it.torque.isNotBlank() }
+        .distinct()
+
+    if (cleanedRows.isEmpty()) return null
+
+    return TorqueSpec(
+        component = component,
+        type = cleanedRows.map { it.type }
+            .filter { it.isMeaningfulTorqueDetail() }
+            .distinct()
+            .joinToString(" / "),
+        thread = cleanedRows.map { it.thread }
+            .filter { it.isMeaningfulTorqueDetail() }
+            .distinct()
+            .joinToString(" / "),
+        tighteningSpecifications = cleanedRows.map { it.tighteningSpecifications }
+            .filter { it.isMeaningfulTorqueDetail() }
+            .distinct()
+            .joinToString(" / "),
+        torque = cleanedRows.map { it.torque }.distinct().joinToString(" / "),
+        source = "TIS screenshot",
+        notes = cleanedRows.toTorqueDetailNotes()
+    )
+}
 
 private fun List<OcrTorqueLine>.groupIntoVisualRows(): List<List<OcrTorqueLine>> {
     if (isEmpty()) return emptyList()
@@ -4085,6 +4324,9 @@ private fun List<OcrTorqueLine>.findLeft(label: String): Int? {
 private fun String.containsAzComponent(): Boolean =
     Regex("^\\d+\\s*AZ\\b", RegexOption.IGNORE_CASE).containsMatchIn(this)
 
+private fun String.containsAzMarker(): Boolean =
+    Regex("\\b\\d+\\s*AZ\\b", RegexOption.IGNORE_CASE).containsMatchIn(this)
+
 private fun String.isTorqueTableHeaderLine(): Boolean {
     val normalized = uppercase()
     return normalized.contains("TIGHTENING TORQUES") ||
@@ -4108,11 +4350,14 @@ private fun String.isSponsoredOrFooterLine(): Boolean {
 
 private fun extractTorqueComponent(line: String): String {
     val withoutTorque = line.replace(torqueRegex, "").trim()
-    val typeStart = Regex("\\bM\\d", RegexOption.IGNORE_CASE).find(withoutTorque)?.range?.first
-    return if (typeStart == null) {
+    val detailStart = listOfNotNull(
+        Regex("\\bM\\d", RegexOption.IGNORE_CASE).find(withoutTorque)?.range?.first,
+        Regex("\\b[EGF]\\d{2}\\b", RegexOption.IGNORE_CASE).find(withoutTorque)?.range?.first
+    ).minOrNull()
+    return if (detailStart == null) {
         withoutTorque.trim()
     } else {
-        withoutTorque.substring(0, typeStart).trim()
+        withoutTorque.substring(0, detailStart).trim()
     }
 }
 
@@ -4152,16 +4397,6 @@ private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean 
 
 private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
     repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
-
-private fun String.isFinishedRepairStatus(): Boolean =
-    lowercase().contains("zakon")
-
-private fun String.normalizedRepairStatusLabel(): String = when {
-    lowercase().contains("zakon") -> "Zakonczona"
-    lowercase().contains("plan") -> "Planowana"
-    lowercase().contains("trak") -> "W trakcie"
-    else -> this
-}
 
 @Preview(showBackground = true, widthDp = 430)
 @Composable

@@ -13,6 +13,8 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "UPDATE_REPO_OWNER", "\"kintoff\"")
+        buildConfigField("String", "UPDATE_REPO_NAME", "\"BMW_garage_helper\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -27,6 +29,11 @@ android {
         }
     }
 
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -36,10 +43,6 @@ android {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
-    }
-
-    buildFeatures {
-        compose = true
     }
 }
 

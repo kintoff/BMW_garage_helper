@@ -16,6 +16,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -52,6 +54,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -95,6 +98,7 @@ fun VehiclePartsStorageScreen(
     onInitialShoppingClosed: () -> Unit = {},
     onInventoryUpdated: (List<PartInventoryItem>) -> Unit = {},
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit = {},
+    bottomBar: (@Composable BoxScope.() -> Unit)? = null,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -272,133 +276,141 @@ fun VehiclePartsStorageScreen(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                TextButton(onClick = onBack) {
-                    Text(if (initialShoppingRepairTitle == null) "Wroc do auta" else "Wroc do naprawy")
-                }
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Header(
-                            title = selectedSection?.title ?: "Magazyn czesci",
-                            subtitle = vehicle.displayName.ifBlank { "Profil auta" }
-                        )
-                    }
-                    AddPartButton(onClick = { isAddingPart = true })
-                }
-            }
-
-            selectedSection?.let { section ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 18.dp,
+                    top = 18.dp,
+                    end = 18.dp,
+                    bottom = if (bottomBar == null) 18.dp else 96.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 item {
-                    TextButton(
-                        onClick = {
-                            if (initialShoppingRepairTitle == null) {
-                                selectedSection = null
-                            } else {
-                                onBack()
+                    TextButton(onClick = onBack) {
+                        Text(if (initialShoppingRepairTitle == null) "Wroc do auta" else "Wroc do naprawy")
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Header(
+                                title = selectedSection?.title ?: "Magazyn czesci",
+                                subtitle = vehicle.displayName.ifBlank { "Profil auta" }
+                            )
+                        }
+                        AddPartButton(onClick = { isAddingPart = true })
+                    }
+                }
+
+                selectedSection?.let { section ->
+                    item {
+                        TextButton(
+                            onClick = {
+                                if (initialShoppingRepairTitle == null) {
+                                    selectedSection = null
+                                } else {
+                                    onBack()
+                                }
+                            }
+                        ) {
+                            Text(if (initialShoppingRepairTitle == null) "Wroc do kafelkow magazynu" else "Wroc do naprawy")
+                        }
+                    }
+
+                    when (section) {
+                        PartsStorageSection.Inventory -> {
+                            item {
+                                InventoryDatabaseSection(
+                                    inventoryParts = allInventoryParts,
+                                    onUpdatePart = { updatedPart ->
+                                        updateStoredParts(
+                                            storedInventoryParts.map {
+                                                if (it.stableId() == updatedPart.stableId()) updatedPart else it
+                                            }
+                                        )
+                                    },
+                                    onEditPart = { partPendingEdit = it },
+                                    onDeletePart = { partPendingDeletion = it }
+                                )
                             }
                         }
-                    ) {
-                        Text(if (initialShoppingRepairTitle == null) "Wroc do kafelkow magazynu" else "Wroc do naprawy")
-                    }
-                }
 
-                when (section) {
-                    PartsStorageSection.Inventory -> {
-                        item {
-                            InventoryDatabaseSection(
-                                inventoryParts = allInventoryParts,
-                                onUpdatePart = { updatedPart ->
-                                    updateStoredParts(
-                                        storedInventoryParts.map {
-                                            if (it.stableId() == updatedPart.stableId()) updatedPart else it
+                        PartsStorageSection.Shopping -> {
+                            item {
+                                ShoppingListSection(
+                                    shoppingList = allShoppingList,
+                                    initialRepairTitle = initialShoppingRepairTitle,
+                                    onAddShoppingItem = { isAddingShoppingItem = true },
+                                    onEditItem = { shoppingItemPendingEdit = it },
+                                    onDeleteItem = { shoppingItemPendingDeletion = it },
+                                    onReceiveItem = { item ->
+                                        shoppingItemPendingReceive = item
+                                    }
+                                )
+                            }
+                        }
+
+                        PartsStorageSection.Consumables -> {
+                            item {
+                                PartsSection(
+                                    title = "Baza materialow eksploatacyjnych",
+                                    subtitle = "Oleje, smary, cleanery, preparaty i inne rzeczy zuzywalne.",
+                                    countLabel = "${consumables.size} pozycji"
+                                ) {
+                                    if (consumables.isEmpty()) {
+                                        EmptyPartsRow("Brak materialow eksploatacyjnych.")
+                                    } else {
+                                        consumables.forEach { item ->
+                                            ConsumableRow(item = item)
                                         }
-                                    )
-                                },
-                                onEditPart = { partPendingEdit = it },
-                                onDeletePart = { partPendingDeletion = it }
-                            )
-                        }
-                    }
-
-                    PartsStorageSection.Shopping -> {
-                        item {
-                            ShoppingListSection(
-                                shoppingList = allShoppingList,
-                                initialRepairTitle = initialShoppingRepairTitle,
-                                onAddShoppingItem = { isAddingShoppingItem = true },
-                                onEditItem = { shoppingItemPendingEdit = it },
-                                onDeleteItem = { shoppingItemPendingDeletion = it },
-                                onReceiveItem = { item ->
-                                    shoppingItemPendingReceive = item
-                                }
-                            )
-                        }
-                    }
-
-                    PartsStorageSection.Consumables -> {
-                        item {
-                            PartsSection(
-                                title = "Baza materialow eksploatacyjnych",
-                                subtitle = "Oleje, smary, cleanery, preparaty i inne rzeczy zuzywalne.",
-                                countLabel = "${consumables.size} pozycji"
-                            ) {
-                                if (consumables.isEmpty()) {
-                                    EmptyPartsRow("Brak materialow eksploatacyjnych.")
-                                } else {
-                                    consumables.forEach { item ->
-                                        ConsumableRow(item = item)
                                     }
                                 }
                             }
                         }
                     }
-                }
-            } ?: run {
-                item {
-                    PartsStorageTile(
-                        eyebrow = "Baza danych",
-                        title = "Stan magazynu",
-                        subtitle = "Pelna lista czesci, ktore masz fizycznie w garazu.",
-                        countLabel = "${allInventoryParts.size} pozycji",
-                        marker = "DB",
-                        onClick = { selectedSection = PartsStorageSection.Inventory }
-                    )
-                }
+                } ?: run {
+                    item {
+                        PartsStorageTile(
+                            eyebrow = "Baza danych",
+                            title = "Stan magazynu",
+                            subtitle = "Pelna lista czesci, ktore masz fizycznie w garazu.",
+                            countLabel = "${allInventoryParts.size} pozycji",
+                            marker = "DB",
+                            onClick = { selectedSection = PartsStorageSection.Inventory }
+                        )
+                    }
 
-                item {
-                    PartsStorageTile(
-                        eyebrow = "Polaczone z naprawami",
-                        title = "Lista zakupow do napraw",
-                        subtitle = "Rozwijana lista czesci pogrupowana wedlug konkretnej naprawy.",
-                        countLabel = "${allShoppingList.size} pozycji",
-                        marker = "ZK",
-                        onClick = { selectedSection = PartsStorageSection.Shopping }
-                    )
-                }
+                    item {
+                        PartsStorageTile(
+                            eyebrow = "Polaczone z naprawami",
+                            title = "Lista zakupow do napraw",
+                            subtitle = "Rozwijana lista czesci pogrupowana wedlug konkretnej naprawy.",
+                            countLabel = "${allShoppingList.size} pozycji",
+                            marker = "ZK",
+                            onClick = { selectedSection = PartsStorageSection.Shopping }
+                        )
+                    }
 
-                item {
-                    PartsStorageTile(
-                        eyebrow = "Baza danych",
-                        title = "Materialy eksploatacyjne",
-                        subtitle = "Oleje, smary, preparaty i inne rzeczy zuzywalne.",
-                        countLabel = "${consumables.size} pozycji",
-                        marker = "ME",
-                        onClick = { selectedSection = PartsStorageSection.Consumables }
-                    )
+                    item {
+                        PartsStorageTile(
+                            eyebrow = "Baza danych",
+                            title = "Materialy eksploatacyjne",
+                            subtitle = "Oleje, smary, preparaty i inne rzeczy zuzywalne.",
+                            countLabel = "${consumables.size} pozycji",
+                            marker = "ME",
+                            onClick = { selectedSection = PartsStorageSection.Consumables }
+                        )
+                    }
                 }
             }
+            bottomBar?.invoke(this)
         }
     }
 }
@@ -1296,14 +1308,12 @@ private fun ExpandableRepairShoppingGroup(
             }
 
             if (isExpanded) {
-                items.forEach { item ->
-                    ShoppingListRow(
-                        item = item,
-                        onEditItem = { onEditItem(item) },
-                        onDeleteItem = { onDeleteItem(item) },
-                        onReceiveItem = { onReceiveItem(item) }
-                    )
-                }
+                ShoppingListTable(
+                    items = items,
+                    onEditItem = onEditItem,
+                    onDeleteItem = onDeleteItem,
+                    onReceiveItem = onReceiveItem
+                )
             }
         }
     }
@@ -1320,7 +1330,59 @@ private fun InventoryPartRow(part: PartInventoryItem) {
 }
 
 @Composable
-private fun ShoppingListRow(
+private fun ShoppingListTable(
+    items: List<ShoppingListItem>,
+    onEditItem: (ShoppingListItem) -> Unit,
+    onDeleteItem: (ShoppingListItem) -> Unit,
+    onReceiveItem: (ShoppingListItem) -> Unit,
+) {
+    val horizontalScroll = rememberScrollState()
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(horizontalScroll),
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.34f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .width(760.dp)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            ShoppingTableHeader()
+            items.forEach { item ->
+                ShoppingTableRow(
+                    item = item,
+                    onEditItem = { onEditItem(item) },
+                    onDeleteItem = { onDeleteItem(item) },
+                    onReceiveItem = { onReceiveItem(item) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShoppingTableHeader() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ShoppingHeaderCell("Foto", Modifier.width(58.dp))
+        ShoppingHeaderCell("Czesc", Modifier.width(178.dp))
+        ShoppingHeaderCell("Numery", Modifier.width(174.dp))
+        ShoppingHeaderCell("Ilosc", Modifier.width(76.dp))
+        ShoppingHeaderCell("Zrodlo", Modifier.width(118.dp))
+        ShoppingHeaderCell("Akcje", Modifier.width(110.dp))
+    }
+}
+
+@Composable
+private fun ShoppingTableRow(
     item: ShoppingListItem,
     onEditItem: () -> Unit,
     onDeleteItem: () -> Unit,
@@ -1328,61 +1390,101 @@ private fun ShoppingListRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
         shape = RoundedCornerShape(8.dp)
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                modifier = Modifier.width(82.dp),
-                color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(8.dp)
+                modifier = Modifier.width(58.dp),
+                color = MaterialTheme.colorScheme.background.copy(alpha = 0.55f),
+                shape = RoundedCornerShape(6.dp)
             ) {
-                PartPhotoContent(photoUri = item.imageUri)
+                PartPhotoContent(photoUri = item.imageUri, height = 52.dp)
             }
+            ShoppingBodyCell(
+                primary = item.name,
+                secondary = item.price.ifBlank { "Cena do sprawdzenia" },
+                modifier = Modifier.width(178.dp)
+            )
+            ShoppingBodyCell(
+                primary = item.partNumber.ifBlank { "OEM do uzupelnienia" },
+                secondary = "Producent: ${item.manufacturerPartNumber.ifBlank { "do wyboru" }}",
+                modifier = Modifier.width(174.dp)
+            )
+            ShoppingBodyCell(
+                primary = "${item.quantity} szt.",
+                secondary = item.area.label,
+                modifier = Modifier.width(76.dp),
+                emphasize = true
+            )
+            ShoppingBodyCell(
+                primary = item.source.ifBlank { "Lista" },
+                secondary = item.shopUrl?.let { "Sklep" } ?: item.realOemUrl?.let { "OEM" } ?: "Recznie",
+                modifier = Modifier.width(118.dp)
+            )
             Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Text(
-                    text = item.name,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "OEM: ${item.partNumber} / Producent: ${item.manufacturerPartNumber.ifBlank { "do wyboru" }}",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-                )
-                Text(
-                    text = "Ilosc: ${item.quantity} / Cena: ${item.price.ifBlank { "do sprawdzenia" }}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "Naprawa: ${item.repairTitle} / ${item.source}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                )
-            }
-            Column(
+                modifier = Modifier.width(110.dp),
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 TextButton(onClick = onReceiveItem) {
-                    Text("Przyjmij")
+                    Text("Przyjmij", fontSize = 12.sp)
                 }
                 TextButton(onClick = onEditItem) {
-                    Text("Edytuj")
+                    Text("Edytuj", fontSize = 12.sp)
                 }
                 TextButton(onClick = onDeleteItem) {
-                    Text("Usun")
+                    Text("Usun", fontSize = 12.sp)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ShoppingHeaderCell(
+    text: String,
+    modifier: Modifier,
+) {
+    Text(
+        text = text,
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.primary,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold
+    )
+}
+
+@Composable
+private fun ShoppingBodyCell(
+    primary: String,
+    secondary: String,
+    modifier: Modifier,
+    emphasize: Boolean = false,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(
+            text = primary,
+            fontSize = if (emphasize) 14.sp else 13.sp,
+            fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (emphasize) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = secondary,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
