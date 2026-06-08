@@ -75,3 +75,42 @@ Uwagi:
 - obecna implementacja zaklada publiczne `GitHub Releases`,
 - dla prywatnego repo trzeba bedzie dodac osobna warstwe autoryzacji albo posredni endpoint,
 - najlepszy format wydania to jeden release = jeden APK do instalacji.
+
+## Workflow wydan APK
+
+W repo jest przygotowany workflow:
+
+- [.github/workflows/release-apk.yml](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/.github/workflows/release-apk.yml)
+
+Przed pierwszym wydaniem ustaw w `GitHub -> Settings -> Secrets and variables -> Actions` sekrety:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_SIGNING_STORE_PASSWORD`
+- `ANDROID_SIGNING_KEY_ALIAS`
+- `ANDROID_SIGNING_KEY_PASSWORD`
+
+Jak przygotowac `ANDROID_KEYSTORE_BASE64` na Macu:
+
+```bash
+base64 -i twoj-release-key.jks | pbcopy
+```
+
+To skopiuje zawartosc do schowka. Wklej ja jako wartosc sekretu `ANDROID_KEYSTORE_BASE64`.
+
+Jak uruchomic wydanie:
+
+1. Wejdz w `Actions`.
+2. Wybierz workflow `Release APK`.
+3. Kliknij `Run workflow`.
+4. Podaj:
+   - `version_name`, np. `0.2.0`
+   - `version_code`, np. `2`
+   - opcjonalnie `release_notes`
+5. Workflow zbuduje podpisany `release APK`, wrzuci go do `GitHub Release` i doda plik `.sha256`.
+
+Wazne zasady:
+
+- `version_code` zawsze musi rosnac,
+- `version_name` powinien zgadzac sie z tagiem release, np. `v0.2.0`,
+- wszystkie wydania musza byc podpisane tym samym kluczem,
+- aplikacja sprawdza nowe wersje na podstawie `GitHub Releases`, wiec release musi zawierac plik `.apk`.
