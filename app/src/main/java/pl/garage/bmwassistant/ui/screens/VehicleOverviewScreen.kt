@@ -29,10 +29,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,12 +46,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.garage.bmwassistant.data.ImportedRepairArchive
-import pl.garage.bmwassistant.data.PartInventoryStorage
-import pl.garage.bmwassistant.data.RepairProjectStorage
 import pl.garage.bmwassistant.data.sampleConsumablesFor
-import pl.garage.bmwassistant.data.sampleRepairDocumentationFor
-import pl.garage.bmwassistant.data.sampleRepairsFor
-import pl.garage.bmwassistant.data.sampleShoppingListFor
+import pl.garage.bmwassistant.database.repository.GarageRepository
+import pl.garage.bmwassistant.database.repository.VehicleDataSnapshot
 import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
@@ -86,8 +84,7 @@ fun VehicleOverviewScreen(
     val currentVehicle = vehicle ?: return
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val repairStorage = remember { RepairProjectStorage(context.applicationContext) }
-    val partStorage = remember { PartInventoryStorage(context.applicationContext) }
+    val garageRepository = remember { GarageRepository(context.applicationContext) }
     var selectedModule by remember { mutableStateOf<VehicleModule?>(null) }
     var isEditingVehicle by remember { mutableStateOf(false) }
     var initialDocumentationRepairTitle by remember { mutableStateOf<String?>(null) }
@@ -106,45 +103,48 @@ fun VehicleOverviewScreen(
     var pendingImportTitle by remember { mutableStateOf<String?>(null) }
     var pendingImportNewTitle by remember { mutableStateOf("") }
     var archiveTransferMessage by remember { mutableStateOf<String?>(null) }
-    var repairProjects by remember(currentVehicle) {
-        mutableStateOf(
-            if (repairStorage.hasRepairs(currentVehicle)) {
-                repairStorage.loadRepairs(currentVehicle)
-            } else {
-                sampleRepairsFor(currentVehicle)
-            }
-        )
+    var repairProjects by remember(currentVehicle.id) { mutableStateOf(emptyList<RepairProject>()) }
+    var repairDocumentation by remember(currentVehicle.id) { mutableStateOf(emptyList<RepairDocumentation>()) }
+    var shoppingListItems by remember(currentVehicle.id) { mutableStateOf(emptyList<ShoppingListItem>()) }
+    var inventoryPartItems by remember(currentVehicle.id) { mutableStateOf(emptyList<PartInventoryItem>()) }
+
+    LaunchedEffect(currentVehicle.id) {
+        val snapshot = withContext(Dispatchers.IO) {
+            garageRepository.loadVehicleSnapshot(currentVehicle)
+        }
+        repairProjects = snapshot.repairs
+        repairDocumentation = snapshot.documentation
+        shoppingListItems = snapshot.shoppingList
+        inventoryPartItems = snapshot.inventoryParts
     }
-    var repairDocumentation by remember(currentVehicle) {
-        mutableStateOf(
-            if (repairStorage.hasDocumentation(currentVehicle)) {
-                repairStorage.loadDocumentation(currentVehicle)
-            } else {
-                sampleRepairDocumentationFor(currentVehicle)
-            }
-        )
-    }
-    var shoppingListItems by remember(currentVehicle) {
-        mutableStateOf(
-            if (partStorage.hasShoppingList(currentVehicle)) {
-                partStorage.loadShoppingList(currentVehicle)
-            } else {
-                sampleShoppingListFor(currentVehicle)
-            }
-        )
-    }
-    var inventoryPartItems by remember(currentVehicle) {
-        mutableStateOf(partStorage.loadParts(currentVehicle))
+
+    fun persistVehicleSnapshot(
+        repairs: List<RepairProject> = repairProjects,
+        documentation: List<RepairDocumentation> = repairDocumentation,
+        shoppingItems: List<ShoppingListItem> = shoppingListItems,
+        inventoryParts: List<PartInventoryItem> = inventoryPartItems,
+    ) {
+        coroutineScope.launch(Dispatchers.IO) {
+            garageRepository.saveVehicleSnapshot(
+                vehicleId = currentVehicle.id,
+                snapshot = VehicleDataSnapshot(
+                    repairs = repairs,
+                    documentation = documentation,
+                    shoppingList = shoppingItems,
+                    inventoryParts = inventoryParts
+                )
+            )
+        }
     }
 
     fun updateRepairs(repairs: List<RepairProject>) {
         repairProjects = repairs
-        repairStorage.saveRepairs(currentVehicle, repairs)
+        persistVehicleSnapshot(repairs = repairs)
     }
 
     fun updateRepairDocumentation(documentation: List<RepairDocumentation>) {
         repairDocumentation = documentation
-        repairStorage.saveDocumentation(currentVehicle, documentation)
+        persistVehicleSnapshot(documentation = documentation)
     }
 
     fun upsertRepairDocumentation(updatedDocumentation: RepairDocumentation) {
@@ -166,32 +166,23 @@ fun VehicleOverviewScreen(
         if (items.isEmpty()) return
         val updatedItems = shoppingListItems + items
         shoppingListItems = updatedItems
-        partStorage.saveShoppingList(currentVehicle, updatedItems)
+        persistVehicleSnapshot(shoppingItems = updatedItems)
     }
 
     fun updateShoppingItems(items: List<ShoppingListItem>) {
         shoppingListItems = items
-        partStorage.saveShoppingList(currentVehicle, items)
+        persistVehicleSnapshot(shoppingItems = items)
     }
 
     fun appendInventoryPart(part: PartInventoryItem) {
         val updatedParts = inventoryPartItems + part
         inventoryPartItems = updatedParts
-        partStorage.saveParts(currentVehicle, updatedParts)
+        persistVehicleSnapshot(inventoryParts = updatedParts)
     }
 
     fun updateInventoryParts(parts: List<PartInventoryItem>) {
         inventoryPartItems = parts
-        partStorage.saveParts(currentVehicle, parts)
-    }
-
-    fun refreshShoppingList() {
-        shoppingListItems = if (partStorage.hasShoppingList(currentVehicle)) {
-            partStorage.loadShoppingList(currentVehicle)
-        } else {
-            shoppingListItems
-        }
-        inventoryPartItems = partStorage.loadParts(currentVehicle)
+        persistVehicleSnapshot(inventoryParts = parts)
     }
 
     fun startRepairExport(repair: RepairProject) {
@@ -211,7 +202,7 @@ fun VehicleOverviewScreen(
                         .map { it.toArchivedShoppingListItem(repair) }
                 ).mergeArchivedShoppingItems(repair)
         }
-        pendingExportArchive = repairStorage.createRepairArchiveExport(
+        pendingExportArchive = garageRepository.createRepairArchiveExport(
             vehicle = currentVehicle,
             repair = repair,
             documentation = documentation,
@@ -225,7 +216,7 @@ fun VehicleOverviewScreen(
         importAsArchived: Boolean,
         titleOverride: String? = null,
     ) {
-        val imported = repairStorage.importRepairArchive(
+        val imported = garageRepository.importRepairArchive(
             vehicle = currentVehicle,
             rawArchive = rawArchive,
             importAsArchived = importAsArchived
@@ -297,7 +288,7 @@ fun VehicleOverviewScreen(
                 if (rawArchive == null) {
                     archiveTransferMessage = "Nie udalo sie otworzyc pliku naprawy."
                 } else {
-                    pendingImportTitle = repairStorage.peekRepairArchiveTitle(rawArchive)
+                    pendingImportTitle = garageRepository.peekRepairArchiveTitle(rawArchive)
                     pendingImportNewTitle = pendingImportTitle
                         ?.takeIf { title -> repairProjects.any { it.title.hasSameRepairTitleAs(title) } }
                         ?.let { title -> repairProjects.nextAvailableRepairTitle(title) }
@@ -701,13 +692,12 @@ fun VehicleOverviewScreen(
                 initialShoppingArea = null
             },
             onInventoryUpdated = { parts ->
-                inventoryPartItems = parts
+                updateInventoryParts(parts)
             },
             onShoppingListUpdated = { items ->
-                shoppingListItems = items
+                updateShoppingItems(items)
             },
             onBack = {
-                refreshShoppingList()
                 if (shouldReturnFromShoppingToRepairs) {
                     shouldReturnFromShoppingToRepairs = false
                     initialShoppingRepairTitle = null

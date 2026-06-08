@@ -1,5 +1,7 @@
 package pl.garage.bmwassistant.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,19 +23,26 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import pl.garage.bmwassistant.R
+import pl.garage.bmwassistant.database.repository.GarageRepository
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
@@ -54,6 +64,9 @@ fun AddVehicleWizard(
     subtitle: String = "Na poczatek dodamy profil auta. Pozniej ten kafelek otworzy naprawy, zdjecia, czesci i dokumenty.",
     saveLabel: String = "Zapisz auto",
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val garageRepository = remember { GarageRepository(context.applicationContext) }
     var brand by rememberSaveable { mutableStateOf(initialVehicle?.brand ?: "BMW") }
     var model by rememberSaveable { mutableStateOf(initialVehicle?.model.orEmpty()) }
     var generation by rememberSaveable { mutableStateOf(initialVehicle?.generation.orEmpty()) }
@@ -63,8 +76,42 @@ fun AddVehicleWizard(
     var mileage by rememberSaveable { mutableStateOf(initialVehicle?.mileage.orEmpty()) }
     var note by rememberSaveable { mutableStateOf(initialVehicle?.note.orEmpty()) }
     var partsCatalogUrl by rememberSaveable { mutableStateOf(initialVehicle?.partsCatalogUrl.orEmpty()) }
+    var importMessage by remember { mutableStateOf<String?>(null) }
 
     val canSave = model.isNotBlank() && engine.isNotBlank()
+    val vehicleImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                val importedVehicle = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            garageRepository.importVehicleBackup(input)
+                        }
+                    }.getOrNull()
+                }
+                if (importedVehicle != null) {
+                    onVehicleCreated(importedVehicle)
+                } else {
+                    importMessage = "Nie udalo sie zaimportowac auta z pliku."
+                }
+            }
+        }
+    }
+
+    importMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { importMessage = null },
+            title = { Text("Import auta") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { importMessage = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -83,6 +130,13 @@ fun AddVehicleWizard(
             }
 
             if (initialVehicle == null) {
+                item {
+                    ImportVehicleCard(
+                        onImport = {
+                            vehicleImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                        }
+                    )
+                }
                 item {
                     VehicleTemplateCard(
                         onUseTemplate = {
@@ -207,6 +261,34 @@ fun AddVehicleWizard(
                         Text(saveLabel)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportVehicleCard(onImport: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Masz juz zapisane auto?",
+                fontSize = 16.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+            )
+            Text(
+                text = "Mozesz od razu wczytac backup profilu, bazy i plikow auta.",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+            )
+            Button(onClick = onImport) {
+                Text("Importuj auto")
             }
         }
     }

@@ -60,7 +60,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.garage.bmwassistant.R
-import pl.garage.bmwassistant.data.PartInventoryStorage
 import pl.garage.bmwassistant.data.sampleConsumablesFor
 import pl.garage.bmwassistant.data.sampleInventoryPartsFor
 import pl.garage.bmwassistant.data.sampleShoppingListFor
@@ -101,8 +100,6 @@ fun VehiclePartsStorageScreen(
     bottomBar: (@Composable BoxScope.() -> Unit)? = null,
     onBack: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val partStorage = remember { PartInventoryStorage(context.applicationContext) }
     var isAddingPart by remember { mutableStateOf(false) }
     var isAddingManualPart by remember { mutableStateOf(false) }
     var isExternalLookupVisible by remember { mutableStateOf(false) }
@@ -113,36 +110,18 @@ fun VehiclePartsStorageScreen(
     var shoppingItemPendingDeletion by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
     var selectedSection by remember(initialSection) { mutableStateOf(initialSection) }
-    var storedInventoryParts by remember(vehicle) {
-        mutableStateOf(
-            if (partStorage.hasParts(vehicle)) {
-                partStorage.loadParts(vehicle)
-            } else {
-                inventoryParts
-            }
-        )
-    }
-    var storedShoppingList by remember(vehicle) {
-        mutableStateOf(
-            if (partStorage.hasShoppingList(vehicle)) {
-                partStorage.loadShoppingList(vehicle)
-            } else {
-                shoppingList
-            }
-        )
-    }
+    var storedInventoryParts by remember(vehicle.id, inventoryParts) { mutableStateOf(inventoryParts) }
+    var storedShoppingList by remember(vehicle.id, shoppingList) { mutableStateOf(shoppingList) }
     val allInventoryParts = storedInventoryParts
     val allShoppingList = storedShoppingList
 
     fun updateStoredParts(parts: List<PartInventoryItem>) {
         storedInventoryParts = parts
-        partStorage.saveParts(vehicle, parts)
         onInventoryUpdated(parts)
     }
 
     fun updateShoppingList(items: List<ShoppingListItem>) {
         storedShoppingList = items
-        partStorage.saveShoppingList(vehicle, items)
         onShoppingListUpdated(items)
     }
 

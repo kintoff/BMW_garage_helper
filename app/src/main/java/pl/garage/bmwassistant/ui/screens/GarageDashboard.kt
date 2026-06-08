@@ -1,5 +1,7 @@
 package pl.garage.bmwassistant.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -55,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pl.garage.bmwassistant.database.repository.GarageRepository
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.update.AppUpdateCheckResult
 import pl.garage.bmwassistant.update.AppUpdateManager
@@ -76,8 +79,11 @@ fun GarageDashboard(
     var vehicleWithOpenOptions by remember { mutableStateOf<Vehicle?>(null) }
     val context = LocalContext.current
     val updateManager = remember { AppUpdateManager(context.applicationContext) }
+    val garageRepository = remember { GarageRepository(context.applicationContext) }
     val coroutineScope = rememberCoroutineScope()
     val isInPreview = LocalInspectionMode.current
+    var backupMessage by remember { mutableStateOf<String?>(null) }
+    var vehiclePendingBackup by remember { mutableStateOf<Vehicle?>(null) }
     var updateCardState by remember {
         mutableStateOf<AppUpdateCardState>(
             if (isInPreview || !updateManager.isConfigured()) {
@@ -86,6 +92,31 @@ fun GarageDashboard(
                 AppUpdateCardState.Checking
             }
         )
+    }
+
+    val vehicleBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        val vehicle = vehiclePendingBackup
+        if (uri != null && vehicle != null) {
+            coroutineScope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            garageRepository.exportVehicleBackup(vehicle, output)
+                        } == true
+                    }.getOrDefault(false)
+                }
+                backupMessage = if (saved) {
+                    "Backup auta zapisany do pliku."
+                } else {
+                    "Nie udalo sie zapisac backupu auta."
+                }
+                vehiclePendingBackup = null
+            }
+        } else {
+            vehiclePendingBackup = null
+        }
     }
 
     LaunchedEffect(updateManager, isInPreview) {
@@ -105,6 +136,16 @@ fun GarageDashboard(
     vehicleWithOpenOptions?.let { vehicle ->
         VehicleOptionsDialog(
             vehicle = vehicle,
+            onBackup = {
+                vehiclePendingBackup = vehicle
+                val safeTitle = vehicle.displayName
+                    .lowercase()
+                    .replace(Regex("[^a-z0-9]+"), "-")
+                    .trim('-')
+                    .ifBlank { "auto" }
+                vehicleBackupLauncher.launch("$safeTitle.bmwgarage")
+                vehicleWithOpenOptions = null
+            },
             onCopy = {
                 onCopyVehicle(vehicle)
                 vehicleWithOpenOptions = null
@@ -114,6 +155,19 @@ fun GarageDashboard(
                 vehicleWithOpenOptions = null
             },
             onDismiss = { vehicleWithOpenOptions = null }
+        )
+    }
+
+    backupMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { backupMessage = null },
+            title = { Text("Backup auta") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { backupMessage = null }) {
+                    Text("OK")
+                }
+            }
         )
     }
 
@@ -458,6 +512,7 @@ private fun AddVehicleWideCard(onClick: () -> Unit) {
 @Composable
 private fun VehicleOptionsDialog(
     vehicle: Vehicle,
+    onBackup: () -> Unit,
     onCopy: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
@@ -466,13 +521,17 @@ private fun VehicleOptionsDialog(
         onDismissRequest = onDismiss,
         title = { Text(vehicle.displayName.ifBlank { "Opcje auta" }) },
         text = {
-            Text("Wybierz akcje dla tego kafelka.")
-        },
-        confirmButton = {
-            TextButton(onClick = onCopy) {
-                Text("Skopiuj auto")
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Wybierz akcje dla tego kafelka.")
+                TextButton(onClick = onBackup) {
+                    Text("Backup auta")
+                }
+                TextButton(onClick = onCopy) {
+                    Text("Skopiuj auto")
+                }
             }
         },
+        confirmButton = {},
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onDelete) {
@@ -497,7 +556,7 @@ fun DeleteVehicleDialog(
         title = { Text("Usunac profil auta?") },
         text = {
             Text(
-                text = "Profil ${vehicle.displayName.ifBlank { "BMW" }} zostanie usuniety z aktualnej listy. W kolejnym kroku podepniemy to pod lokalna baze danych."
+                text = "Profil ${vehicle.displayName.ifBlank { "BMW" }} zostanie usuniety razem z lokalna baza i plikami tego auta."
             )
         },
         confirmButton = {
