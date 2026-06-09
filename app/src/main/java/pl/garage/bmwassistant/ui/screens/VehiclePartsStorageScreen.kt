@@ -13,17 +13,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,9 +45,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -65,6 +68,7 @@ import pl.garage.bmwassistant.data.sampleInventoryPartsFor
 import pl.garage.bmwassistant.data.sampleShoppingListFor
 import pl.garage.bmwassistant.model.ConsumableItem
 import pl.garage.bmwassistant.model.PartInventoryItem
+import pl.garage.bmwassistant.model.RepairProject
 import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
@@ -85,9 +89,18 @@ import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
 
+private val ShoppingReceiveButtonColor = Color(0xFF153D2F)
+private val ShoppingReceiveButtonContentColor = Color(0xFF69F0AE)
+private val EditActionButtonColor = Color(0xFF16293E)
+private val EditActionButtonContentColor = Color(0xFF7DC4FF)
+private val DeleteActionButtonColor = Color(0xFF34191C)
+private val DeleteActionButtonContentColor = Color(0xFFFF7A70)
+private val MetaSurfaceColor = Color(0xFF111E2C)
+
 @Composable
 fun VehiclePartsStorageScreen(
     vehicle: Vehicle,
+    availableRepairs: List<RepairProject> = emptyList(),
     inventoryParts: List<PartInventoryItem>,
     shoppingList: List<ShoppingListItem>,
     consumables: List<ConsumableItem>,
@@ -109,7 +122,10 @@ fun VehiclePartsStorageScreen(
     var shoppingItemPendingEdit by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingDeletion by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
-    var selectedSection by remember(initialSection) { mutableStateOf(initialSection) }
+    var selectedSectionName by rememberSaveable(vehicle.id, initialShoppingRepairTitle) {
+        mutableStateOf(initialSection?.name)
+    }
+    val selectedSection = selectedSectionName?.let(PartsStorageSection::valueOf)
     var storedInventoryParts by remember(vehicle.id, inventoryParts) { mutableStateOf(inventoryParts) }
     var storedShoppingList by remember(vehicle.id, shoppingList) { mutableStateOf(shoppingList) }
     val allInventoryParts = storedInventoryParts
@@ -127,7 +143,7 @@ fun VehiclePartsStorageScreen(
 
     BackHandler(enabled = selectedSection != null) {
         if (initialShoppingRepairTitle == null) {
-            selectedSection = null
+            selectedSectionName = null
             onInitialShoppingClosed()
         } else {
             onBack()
@@ -151,11 +167,12 @@ fun VehiclePartsStorageScreen(
     if (isAddingManualPart) {
         ManualPartEntryDialog(
             nextId = nextPartId(storedInventoryParts),
+            availableRepairs = availableRepairs,
             onDismiss = { isAddingManualPart = false },
             onSave = { part ->
                 updateStoredParts(storedInventoryParts + part)
                 isAddingManualPart = false
-                selectedSection = PartsStorageSection.Inventory
+                selectedSectionName = PartsStorageSection.Inventory.name
             }
         )
     }
@@ -163,11 +180,12 @@ fun VehiclePartsStorageScreen(
     if (isExternalLookupVisible) {
         ExternalPartLookupDialog(
             nextId = nextPartId(storedInventoryParts),
+            availableRepairs = availableRepairs,
             onDismiss = { isExternalLookupVisible = false },
             onSave = { part ->
                 updateStoredParts(storedInventoryParts + part)
                 isExternalLookupVisible = false
-                selectedSection = PartsStorageSection.Inventory
+                selectedSectionName = PartsStorageSection.Inventory.name
             }
         )
     }
@@ -181,7 +199,7 @@ fun VehiclePartsStorageScreen(
             onSave = { item ->
                 updateShoppingList(storedShoppingList + item)
                 isAddingShoppingItem = false
-                selectedSection = PartsStorageSection.Shopping
+                selectedSectionName = PartsStorageSection.Shopping.name
             }
         )
     }
@@ -189,6 +207,7 @@ fun VehiclePartsStorageScreen(
     shoppingItemPendingEdit?.let { item ->
         EditShoppingItemDialog(
             item = item,
+            availableRepairs = availableRepairs,
             onDismiss = { shoppingItemPendingEdit = null },
             onSave = { updatedItem ->
                 updateShoppingList(
@@ -215,6 +234,7 @@ fun VehiclePartsStorageScreen(
     partPendingEdit?.let { part ->
         ManualPartEntryDialog(
             nextId = part.id,
+            availableRepairs = availableRepairs,
             initialPart = part,
             onDismiss = { partPendingEdit = null },
             onSave = { updatedPart ->
@@ -293,7 +313,7 @@ fun VehiclePartsStorageScreen(
                         TextButton(
                             onClick = {
                                 if (initialShoppingRepairTitle == null) {
-                                    selectedSection = null
+                                    selectedSectionName = null
                                 } else {
                                     onBack()
                                 }
@@ -362,7 +382,7 @@ fun VehiclePartsStorageScreen(
                             subtitle = "Pelna lista czesci, ktore masz fizycznie w garazu.",
                             countLabel = "${allInventoryParts.size} pozycji",
                             marker = "DB",
-                            onClick = { selectedSection = PartsStorageSection.Inventory }
+                            onClick = { selectedSectionName = PartsStorageSection.Inventory.name }
                         )
                     }
 
@@ -373,7 +393,7 @@ fun VehiclePartsStorageScreen(
                             subtitle = "Rozwijana lista czesci pogrupowana wedlug konkretnej naprawy.",
                             countLabel = "${allShoppingList.size} pozycji",
                             marker = "ZK",
-                            onClick = { selectedSection = PartsStorageSection.Shopping }
+                            onClick = { selectedSectionName = PartsStorageSection.Shopping.name }
                         )
                     }
 
@@ -384,7 +404,7 @@ fun VehiclePartsStorageScreen(
                             subtitle = "Oleje, smary, preparaty i inne rzeczy zuzywalne.",
                             countLabel = "${consumables.size} pozycji",
                             marker = "ME",
-                            onClick = { selectedSection = PartsStorageSection.Consumables }
+                            onClick = { selectedSectionName = PartsStorageSection.Consumables.name }
                         )
                     }
                 }
@@ -464,6 +484,44 @@ fun ShoppingListItem.toInventoryPart(
         photoUri = imageUri,
         repairId = repairId.ifBlank { null }
     )
+
+private fun List<ShoppingListItem>.primaryArea(): VehicleArea =
+    groupBy { it.area }
+        .maxByOrNull { (_, items) -> items.size }
+        ?.key
+        ?: VehicleArea.Service
+
+private fun List<ShoppingListItem>.areaSummaryLabel(): String? {
+    val distinctAreas = map { it.area }.distinct()
+    return when {
+        distinctAreas.isEmpty() -> null
+        distinctAreas.size == 1 -> distinctAreas.first().label
+        else -> "${distinctAreas.size} obszary"
+    }
+}
+
+private fun shoppingTotalLabel(items: List<ShoppingListItem>): String {
+    val total = items.sumOf { item ->
+        val price = parsePriceAmount(item.price) ?: 0.0
+        price * item.quantity
+    }
+    return if (total > 0.0) {
+        "Wartosc: ${"%.2f".format(Locale.US, total).replace('.', ',')} PLN"
+    } else {
+        "Wartosc do uzupelnienia"
+    }
+}
+
+private fun parsePriceAmount(value: String): Double? {
+    val normalized = value
+        .replace("PLN", "", ignoreCase = true)
+        .replace("zl", "", ignoreCase = true)
+        .replace("zł", "", ignoreCase = true)
+        .replace(" ", "")
+        .replace(",", ".")
+    val matched = Regex("""\d+(\.\d+)?""").find(normalized)?.value ?: return null
+    return matched.toDoubleOrNull()
+}
 
 @Composable
 private fun PartsStorageTile(
@@ -663,7 +721,7 @@ private fun InventoryDatabaseSection(
         if (filteredParts.isEmpty()) {
             EmptyPartsRow("Brak wynikow dla wybranej kolumny.")
         } else {
-            InventoryDatabaseTable(
+            InventoryCardList(
                 parts = filteredParts,
                 photoUris = photoUris,
                 onAddPhoto = { partId ->
@@ -682,7 +740,7 @@ private fun InventoryDatabaseSection(
 }
 
 @Composable
-private fun InventoryDatabaseTable(
+private fun InventoryCardList(
     parts: List<PartInventoryItem>,
     photoUris: Map<String, String>,
     onAddPhoto: (String) -> Unit,
@@ -690,119 +748,16 @@ private fun InventoryDatabaseTable(
     onEditPart: (PartInventoryItem) -> Unit,
     onDeletePart: (PartInventoryItem) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState())
-    ) {
-        Column {
-            InventoryTableHeader()
-            parts.forEach { part ->
-                InventoryTableRow(
-                    part = part,
-                    photoUri = photoUris[part.stableId()],
-                    onAddPhoto = { onAddPhoto(part.stableId()) },
-                    onSetPhotoUrl = { photoUrl -> onSetPhotoUrl(part, photoUrl) },
-                    onEditPart = { onEditPart(part) },
-                    onDeletePart = { onDeletePart(part) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun InventoryTableHeader() {
-    Surface(
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-        shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
-    ) {
-        Row {
-            InventoryTableCell("Zdjecie", 118.dp, isHeader = true)
-            InventoryTableCell("ID", 72.dp, isHeader = true)
-            InventoryTableCell("Nr czesci OEM", 150.dp, isHeader = true)
-            InventoryTableCell("Nr producenta", 150.dp, isHeader = true)
-            InventoryTableCell("Nazwa czesci", 230.dp, isHeader = true)
-            InventoryTableCell("Producent", 140.dp, isHeader = true)
-            InventoryTableCell("Do jakiej naprawy", 210.dp, isHeader = true)
-            InventoryTableCell("Ilosc", 72.dp, isHeader = true)
-            InventoryTableCell("Cena zakupu", 130.dp, isHeader = true)
-            InventoryTableCell("Akcje", 150.dp, isHeader = true)
-        }
-    }
-}
-
-@Composable
-private fun InventoryTableRow(
-    part: PartInventoryItem,
-    photoUri: String?,
-    onAddPhoto: () -> Unit,
-    onSetPhotoUrl: (String) -> Unit,
-    onEditPart: () -> Unit,
-    onDeletePart: () -> Unit,
-) {
-    Surface(
-        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
-    ) {
-        Row {
-            InventoryPhotoCell(
-                photoUri = photoUri,
-                imageSearchUrl = part.imageSearchUrl(),
-                onAddPhoto = onAddPhoto,
-                onSetPhotoUrl = onSetPhotoUrl
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        parts.forEach { part ->
+            InventoryPartCard(
+                part = part,
+                photoUri = photoUris[part.stableId()],
+                onAddPhoto = { onAddPhoto(part.stableId()) },
+                onSetPhotoUrl = { photoUrl -> onSetPhotoUrl(part, photoUrl) },
+                onEditPart = { onEditPart(part) },
+                onDeletePart = { onDeletePart(part) }
             )
-            InventoryTableCell(part.id, 72.dp)
-            InventoryTableCell(part.oemPartNumber, 150.dp)
-            InventoryTableCell(part.manufacturerPartNumber, 150.dp)
-            InventoryTableCell(part.name, 230.dp)
-            InventoryTableCell(part.manufacturer, 140.dp)
-            InventoryTableCell(part.repairTitle ?: "Bez przypisania", 210.dp)
-            InventoryTableCell(part.quantity.toString(), 72.dp)
-            InventoryTableCell(part.purchasePrice, 130.dp)
-            InventoryActionsCell(
-                onEditPart = onEditPart,
-                onDeletePart = onDeletePart
-            )
-        }
-    }
-}
-
-@Composable
-private fun InventoryTableCell(
-    text: String,
-    width: Dp,
-    isHeader: Boolean = false,
-) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .width(width)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        fontSize = if (isHeader) 12.sp else 13.sp,
-        fontWeight = if (isHeader) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (isHeader) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f)
-        }
-    )
-}
-
-@Composable
-private fun InventoryActionsCell(
-    onEditPart: () -> Unit,
-    onDeletePart: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .width(150.dp)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        TextButton(onClick = onEditPart) {
-            Text("Edytuj")
-        }
-        TextButton(onClick = onDeletePart) {
-            Text("Usun")
         }
     }
 }
@@ -895,8 +850,8 @@ private fun InventoryPhotoCell(
 
     Surface(
         modifier = Modifier
-            .width(118.dp)
-            .padding(8.dp)
+            .fillMaxWidth()
+            .padding(4.dp)
             .clickable {
                 if (photoUri == null) {
                     isMissingPhotoMenuOpen = true
@@ -905,9 +860,12 @@ private fun InventoryPhotoCell(
                 }
             },
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(12.dp)
     ) {
-        PartPhotoContent(photoUri = photoUri)
+        PartPhotoContent(
+            photoUri = photoUri,
+            height = 92.dp
+        )
     }
 }
 
@@ -915,6 +873,7 @@ private fun InventoryPhotoCell(
 fun PartPhotoContent(
     photoUri: String?,
     height: Dp = 52.dp,
+    contentScale: ContentScale = ContentScale.Crop,
 ) {
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(initialValue = null, photoUri) {
@@ -945,7 +904,7 @@ fun PartPhotoContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(height),
-            contentScale = ContentScale.Crop
+            contentScale = contentScale
         )
     } else {
         Row(
@@ -1017,6 +976,226 @@ private fun PartInventoryItem.imageSearchUrl(): String =
         partNumber = manufacturerPartNumber.ifBlank { oemPartNumber },
         manufacturer = manufacturer
     )
+
+@Composable
+private fun InventoryPartCard(
+    part: PartInventoryItem,
+    photoUri: String?,
+    onAddPhoto: () -> Unit,
+    onSetPhotoUrl: (String) -> Unit,
+    onEditPart: () -> Unit,
+    onDeletePart: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.34f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Surface(
+                    modifier = Modifier.size(108.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Box(modifier = Modifier.padding(6.dp)) {
+                        InventoryPhotoCell(
+                            photoUri = photoUri,
+                            imageSearchUrl = part.imageSearchUrl(),
+                            onAddPhoto = onAddPhoto,
+                            onSetPhotoUrl = onSetPhotoUrl
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = part.name,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = listOf(part.manufacturer, part.manufacturerPartNumber)
+                            .filter { it.isNotBlank() && it != "do uzupelnienia" }
+                            .joinToString(" ")
+                            .ifBlank { "Numer producenta do uzupelnienia" },
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    InventoryMetaLine("OEM", part.oemPartNumber.ifBlank { "Do uzupelnienia" })
+                    Text(
+                        text = "ID: ${part.id}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                InventoryInfoPill(
+                    label = "Na stanie",
+                    value = "${part.quantity} szt."
+                )
+                InventoryInfoPill(
+                    label = "Cena zakupu",
+                    value = part.purchasePrice.ifBlank { "Do uzupelnienia" },
+                    emphasize = true
+                )
+            }
+
+            part.repairTitle?.let { repairTitle ->
+                Surface(
+                    color = MetaSurfaceColor.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "Powiazana naprawa: $repairTitle",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                PartActionButton(
+                    label = "Edytuj",
+                    iconRes = R.drawable.ic_edit,
+                    containerColor = EditActionButtonColor,
+                    contentColor = EditActionButtonContentColor,
+                    modifier = Modifier.weight(1f),
+                    onClick = onEditPart
+                )
+                PartActionButton(
+                    label = "Usun",
+                    iconRes = R.drawable.ic_delete,
+                    containerColor = DeleteActionButtonColor,
+                    contentColor = DeleteActionButtonContentColor,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDeletePart
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InventoryMetaLine(
+    label: String,
+    value: String,
+) {
+    Text(
+        text = "$label: $value",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Medium
+    )
+}
+
+@Composable
+private fun InventoryInfoPill(
+    label: String,
+    value: String,
+    emphasize: Boolean = false,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+        )
+        Text(
+            text = value,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (emphasize) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+private fun SummaryBadge(
+    label: String,
+    emphasized: Boolean,
+) {
+    Surface(
+        color = if (emphasized) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        } else {
+            MetaSurfaceColor.copy(alpha = 0.76f)
+        },
+        shape = RoundedCornerShape(999.dp)
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (emphasized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f)
+        )
+    }
+}
+
+@Composable
+private fun PartActionButton(
+    label: String,
+    iconRes: Int,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        color = containerColor,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = label,
+                tint = contentColor,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = label,
+                modifier = Modifier.padding(start = 8.dp),
+                color = contentColor,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Clip
+            )
+        }
+    }
+}
 
 @Composable
 private fun AddPartButton(onClick: () -> Unit) {
@@ -1091,18 +1270,16 @@ private fun ShoppingListSection(
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
 ) {
-    var expandedRepairs by remember(shoppingList, initialRepairTitle) {
+    var expandedRepairTitles by rememberSaveable(shoppingList, initialRepairTitle) {
         mutableStateOf(
             if (initialRepairTitle.isNullOrBlank()) {
-                shoppingList.map { it.repairTitle }.toSet()
+                shoppingList.map { it.repairTitle }.distinct()
             } else {
-                setOf(initialRepairTitle)
+                listOf(initialRepairTitle)
             }
         )
     }
-    var expandedAreas by remember(shoppingList, initialRepairTitle) {
-        mutableStateOf(shoppingList.map { it.area }.toSet().ifEmpty { setOf(VehicleArea.Engine) })
-    }
+    val expandedRepairs = remember(expandedRepairTitles) { expandedRepairTitles.toSet() }
     val visibleItems = if (initialRepairTitle.isNullOrBlank()) {
         shoppingList
     } else {
@@ -1120,46 +1297,20 @@ private fun ShoppingListSection(
         if (visibleItems.isEmpty()) {
             EmptyPartsRow("Brak czesci do kupienia.")
         } else {
-            if (initialRepairTitle == null) {
-                VehicleArea.entries.forEach { area ->
-                    val areaItems = visibleItems.filter { it.area == area }
-                    if (areaItems.isNotEmpty()) {
-                        ShoppingAreaSection(
-                            area = area,
-                            items = areaItems,
-                            expandedRepairs = expandedRepairs,
-                            isExpanded = area in expandedAreas,
-                            onAreaToggle = {
-                                expandedAreas = if (area in expandedAreas) {
-                                    expandedAreas - area
-                                } else {
-                                    expandedAreas + area
-                                }
-                            },
-                            onRepairToggle = { repairTitle ->
-                                expandedRepairs = if (repairTitle in expandedRepairs) {
-                                    expandedRepairs - repairTitle
-                                } else {
-                                    expandedRepairs + repairTitle
-                                }
-                            },
-                            onEditItem = onEditItem,
-                            onDeleteItem = onDeleteItem,
-                            onReceiveItem = onReceiveItem
-                        )
-                    }
-                }
-            } else {
-                visibleItems.groupBy { it.repairTitle }.forEach { (repairTitle, items) ->
+            visibleItems
+                .groupBy { it.repairTitle }
+                .toList()
+                .sortedBy { (repairTitle, _) -> repairTitle.lowercase(Locale.getDefault()) }
+                .forEach { (repairTitle, items) ->
                     ExpandableRepairShoppingGroup(
                         repairTitle = repairTitle,
                         items = items,
                         isExpanded = repairTitle in expandedRepairs,
                         onToggle = {
-                            expandedRepairs = if (repairTitle in expandedRepairs) {
-                                expandedRepairs - repairTitle
+                            expandedRepairTitles = if (repairTitle in expandedRepairs) {
+                                expandedRepairTitles - repairTitle
                             } else {
-                                expandedRepairs + repairTitle
+                                expandedRepairTitles + repairTitle
                             }
                         },
                         onEditItem = onEditItem,
@@ -1167,76 +1318,6 @@ private fun ShoppingListSection(
                         onReceiveItem = onReceiveItem
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ShoppingAreaSection(
-    area: VehicleArea,
-    items: List<ShoppingListItem>,
-    expandedRepairs: Set<String>,
-    isExpanded: Boolean,
-    onAreaToggle: () -> Unit,
-    onRepairToggle: (String) -> Unit,
-    onEditItem: (ShoppingListItem) -> Unit,
-    onDeleteItem: (ShoppingListItem) -> Unit,
-    onReceiveItem: (ShoppingListItem) -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onAreaToggle),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Image(
-                    painter = painterResource(area.iconResource()),
-                    contentDescription = area.label,
-                    modifier = Modifier.height(30.dp)
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = area.label,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "${items.size} pozycji zakupowych",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                    )
-                }
-                Text(
-                    text = if (isExpanded) "Zwin" else "Rozwin",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
-            if (isExpanded) {
-                items.groupBy { it.repairTitle }.forEach { (repairTitle, repairItems) ->
-                    ExpandableRepairShoppingGroup(
-                        repairTitle = repairTitle,
-                        items = repairItems,
-                        isExpanded = repairTitle in expandedRepairs,
-                        onToggle = { onRepairToggle(repairTitle) },
-                        onEditItem = onEditItem,
-                        onDeleteItem = onDeleteItem,
-                        onReceiveItem = onReceiveItem
-                    )
-                }
-            }
         }
     }
 }
@@ -1251,43 +1332,75 @@ private fun ExpandableRepairShoppingGroup(
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
 ) {
-    Surface(
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.36f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onToggle),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Image(
+                        painter = painterResource(items.primaryArea().iconResource()),
+                        contentDescription = items.primaryArea().label,
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .height(28.dp)
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Text(
                         text = repairTitle,
-                        fontSize = 16.sp,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold
                     )
-                    Text(
-                        text = "${items.size} pozycji zakupowych",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SummaryBadge(
+                            label = "${items.size} pozycji",
+                            emphasized = false
+                        )
+                        SummaryBadge(
+                            label = shoppingTotalLabel(items),
+                            emphasized = true
+                        )
+                        items.areaSummaryLabel()?.let { label ->
+                            SummaryBadge(
+                                label = label,
+                                emphasized = false
+                            )
+                        }
+                    }
                 }
                 Text(
                     text = if (isExpanded) "Zwin" else "Rozwin",
                     color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.SemiBold
                 )
             }
 
             if (isExpanded) {
-                ShoppingListTable(
+                ShoppingCardList(
                     items = items,
                     onEditItem = onEditItem,
                     onDeleteItem = onDeleteItem,
@@ -1299,171 +1412,134 @@ private fun ExpandableRepairShoppingGroup(
 }
 
 @Composable
-private fun InventoryPartRow(part: PartInventoryItem) {
-    PartLikeRow(
-        title = part.name,
-        subtitle = "OEM: ${part.oemPartNumber} / Producent: ${part.manufacturerPartNumber}",
-        meta = "Ilosc: ${part.quantity} / Cena: ${part.purchasePrice}",
-        relation = part.repairTitle?.let { "Naprawa: $it" } ?: "Bez przypisanej naprawy"
-    )
-}
-
-@Composable
-private fun ShoppingListTable(
+private fun ShoppingCardList(
     items: List<ShoppingListItem>,
     onEditItem: (ShoppingListItem) -> Unit,
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
 ) {
-    val horizontalScroll = rememberScrollState()
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(horizontalScroll),
-        color = MaterialTheme.colorScheme.background.copy(alpha = 0.34f),
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .width(760.dp)
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            ShoppingTableHeader()
-            items.forEach { item ->
-                ShoppingTableRow(
-                    item = item,
-                    onEditItem = { onEditItem(item) },
-                    onDeleteItem = { onDeleteItem(item) },
-                    onReceiveItem = { onReceiveItem(item) }
-                )
-            }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items.forEach { item ->
+            ShoppingListItemCard(
+                item = item,
+                onEditItem = { onEditItem(item) },
+                onDeleteItem = { onDeleteItem(item) },
+                onReceiveItem = { onReceiveItem(item) }
+            )
         }
     }
 }
 
 @Composable
-private fun ShoppingTableHeader() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        ShoppingHeaderCell("Foto", Modifier.width(58.dp))
-        ShoppingHeaderCell("Czesc", Modifier.width(178.dp))
-        ShoppingHeaderCell("Numery", Modifier.width(174.dp))
-        ShoppingHeaderCell("Ilosc", Modifier.width(76.dp))
-        ShoppingHeaderCell("Zrodlo", Modifier.width(118.dp))
-        ShoppingHeaderCell("Akcje", Modifier.width(110.dp))
-    }
-}
-
-@Composable
-private fun ShoppingTableRow(
+private fun ShoppingListItemCard(
     item: ShoppingListItem,
     onEditItem: () -> Unit,
     onDeleteItem: () -> Unit,
     onReceiveItem: () -> Unit,
 ) {
-    Surface(
+    val manufacturerCode = item.manufacturerPartNumber.trim()
+    val oemCode = item.partNumber.trim()
+    val shouldShowManufacturerCode =
+        manufacturerCode.isNotBlank() &&
+            manufacturerCode.lowercase(Locale.getDefault()) != oemCode.lowercase(Locale.getDefault())
+
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Surface(
-                modifier = Modifier.width(58.dp),
-                color = MaterialTheme.colorScheme.background.copy(alpha = 0.55f),
-                shape = RoundedCornerShape(6.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.Top
             ) {
-                PartPhotoContent(photoUri = item.imageUri, height = 52.dp)
+                Surface(
+                    modifier = Modifier.size(108.dp),
+                    color = MaterialTheme.colorScheme.background.copy(alpha = 0.52f),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Box(modifier = Modifier.padding(6.dp)) {
+                        PartPhotoContent(
+                            photoUri = item.imageUri,
+                            height = 96.dp
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = item.name,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    InventoryMetaLine(
+                        label = "OEM",
+                        value = item.partNumber.ifBlank { "Do uzupelnienia" }
+                    )
+                    if (shouldShowManufacturerCode) {
+                        Text(
+                            text = manufacturerCode,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
+                        )
+                    }
+                }
             }
-            ShoppingBodyCell(
-                primary = item.name,
-                secondary = item.price.ifBlank { "Cena do sprawdzenia" },
-                modifier = Modifier.width(178.dp)
-            )
-            ShoppingBodyCell(
-                primary = item.partNumber.ifBlank { "OEM do uzupelnienia" },
-                secondary = "Producent: ${item.manufacturerPartNumber.ifBlank { "do wyboru" }}",
-                modifier = Modifier.width(174.dp)
-            )
-            ShoppingBodyCell(
-                primary = "${item.quantity} szt.",
-                secondary = item.area.label,
-                modifier = Modifier.width(76.dp),
-                emphasize = true
-            )
-            ShoppingBodyCell(
-                primary = item.source.ifBlank { "Lista" },
-                secondary = item.shopUrl?.let { "Sklep" } ?: item.realOemUrl?.let { "OEM" } ?: "Recznie",
-                modifier = Modifier.width(118.dp)
-            )
-            Column(
-                modifier = Modifier.width(110.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(0.dp)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onReceiveItem) {
-                    Text("Przyjmij", fontSize = 12.sp)
-                }
-                TextButton(onClick = onEditItem) {
-                    Text("Edytuj", fontSize = 12.sp)
-                }
-                TextButton(onClick = onDeleteItem) {
-                    Text("Usun", fontSize = 12.sp)
-                }
+                InventoryInfoPill(
+                    label = "Ilosc",
+                    value = "${item.quantity} szt."
+                )
+                InventoryInfoPill(
+                    label = "Cena za sztuke",
+                    value = item.price.ifBlank { "Cena do sprawdzenia" },
+                    emphasize = true
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                PartActionButton(
+                    label = "Przyjmij",
+                    iconRes = R.drawable.ic_check,
+                    containerColor = ShoppingReceiveButtonColor,
+                    contentColor = ShoppingReceiveButtonContentColor,
+                    modifier = Modifier.weight(1f),
+                    onClick = onReceiveItem
+                )
+                PartActionButton(
+                    label = "Edytuj",
+                    iconRes = R.drawable.ic_edit,
+                    containerColor = EditActionButtonColor,
+                    contentColor = EditActionButtonContentColor,
+                    modifier = Modifier.weight(1f),
+                    onClick = onEditItem
+                )
+                PartActionButton(
+                    label = "Usun",
+                    iconRes = R.drawable.ic_delete,
+                    containerColor = DeleteActionButtonColor,
+                    contentColor = DeleteActionButtonContentColor,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDeleteItem
+                )
             }
         }
-    }
-}
-
-@Composable
-private fun ShoppingHeaderCell(
-    text: String,
-    modifier: Modifier,
-) {
-    Text(
-        text = text,
-        modifier = modifier,
-        color = MaterialTheme.colorScheme.primary,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.SemiBold
-    )
-}
-
-@Composable
-private fun ShoppingBodyCell(
-    primary: String,
-    secondary: String,
-    modifier: Modifier,
-    emphasize: Boolean = false,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        Text(
-            text = primary,
-            fontSize = if (emphasize) 14.sp else 13.sp,
-            fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (emphasize) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = secondary,
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -1565,6 +1641,7 @@ private fun ReceiveShoppingItemDialog(
 @Composable
 private fun EditShoppingItemDialog(
     item: ShoppingListItem,
+    availableRepairs: List<RepairProject>,
     onDismiss: () -> Unit,
     onSave: (ShoppingListItem) -> Unit,
 ) {
@@ -1572,14 +1649,26 @@ private fun EditShoppingItemDialog(
     var oemPartNumber by remember(item) { mutableStateOf(item.partNumber) }
     var manufacturerPartNumber by remember(item) { mutableStateOf(item.manufacturerPartNumber) }
     var manufacturer by remember(item) { mutableStateOf(item.manufacturer) }
-    var repairTitle by remember(item) { mutableStateOf(item.repairTitle) }
+    val repairOptions = remember(availableRepairs) {
+        availableRepairs
+            .sortedBy { it.title.lowercase(Locale.getDefault()) }
+            .map { repair -> repair.id to repair.title }
+    }
+    val initialRepairSelection = remember(item, repairOptions) {
+        repairOptions.firstOrNull { (repairId, repairTitle) ->
+            repairId == item.repairId || (item.repairId.isBlank() && repairTitle == item.repairTitle)
+        }?.first
+    }
+    var selectedRepairId by remember(item, initialRepairSelection) { mutableStateOf(initialRepairSelection) }
     var area by remember(item) { mutableStateOf(item.area) }
     var quantity by remember(item) { mutableStateOf(item.quantity.toString()) }
     var price by remember(item) { mutableStateOf(item.price) }
     var source by remember(item) { mutableStateOf(item.source) }
     var isAreaPickerVisible by remember { mutableStateOf(false) }
+    var isRepairPickerVisible by remember { mutableStateOf(false) }
+    val selectedRepairTitle = repairOptions.firstOrNull { it.first == selectedRepairId }?.second.orEmpty()
     val quantityValue = quantity.toIntOrNull()
-    val canSave = name.isNotBlank() && repairTitle.isNotBlank() && quantityValue != null && quantityValue > 0
+    val canSave = name.isNotBlank() && quantityValue != null && quantityValue > 0
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1613,12 +1702,61 @@ private fun EditShoppingItemDialog(
                     label = "Producent",
                     modifier = Modifier.fillMaxWidth()
                 )
-                GarageTextField(
-                    value = repairTitle,
-                    onValueChange = { repairTitle = it },
-                    label = "Naprawa",
-                    modifier = Modifier.fillMaxWidth()
-                )
+                TextButton(onClick = { isRepairPickerVisible = !isRepairPickerVisible }) {
+                    Text(
+                        if (selectedRepairTitle.isBlank()) {
+                            "Naprawa: brak przypisania"
+                        } else {
+                            "Naprawa: $selectedRepairTitle"
+                        }
+                    )
+                }
+                if (isRepairPickerVisible) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedRepairId = null
+                                    isRepairPickerVisible = false
+                                },
+                            color = if (selectedRepairId == null) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            } else {
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                            },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Brak przypisania",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                color = if (selectedRepairId == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        repairOptions.forEach { (repairId, repairTitle) ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedRepairId = repairId
+                                        isRepairPickerVisible = false
+                                    },
+                                color = if (repairId == selectedRepairId) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                } else {
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = repairTitle,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    color = if (repairId == selectedRepairId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
                 TextButton(onClick = { isAreaPickerVisible = !isAreaPickerVisible }) {
                     Text("Katalog: ${area.label}")
                 }
@@ -1673,13 +1811,15 @@ private fun EditShoppingItemDialog(
             TextButton(
                 enabled = canSave,
                 onClick = {
+                    val repairTitle = repairOptions.firstOrNull { it.first == selectedRepairId }?.second.orEmpty()
                     onSave(
                         item.copy(
                             partNumber = oemPartNumber.trim(),
                             manufacturerPartNumber = manufacturerPartNumber.trim(),
                             name = name.trim(),
                             manufacturer = manufacturer.trim(),
-                            repairTitle = repairTitle.trim(),
+                            repairTitle = repairTitle,
+                            repairId = selectedRepairId.orEmpty(),
                             area = area,
                             quantity = quantityValue ?: item.quantity,
                             source = source.trim().ifBlank { item.source },
@@ -1878,6 +2018,7 @@ private fun AddPartModeRow(
 @Composable
 private fun ManualPartEntryDialog(
     nextId: String,
+    availableRepairs: List<RepairProject>,
     initialPart: PartInventoryItem? = null,
     onDismiss: () -> Unit,
     onSave: (PartInventoryItem) -> Unit,
@@ -1886,9 +2027,21 @@ private fun ManualPartEntryDialog(
     var manufacturerPartNumber by remember(initialPart) { mutableStateOf(initialPart?.manufacturerPartNumber.orEmpty()) }
     var name by remember(initialPart) { mutableStateOf(initialPart?.name.orEmpty()) }
     var manufacturer by remember(initialPart) { mutableStateOf(initialPart?.manufacturer.orEmpty()) }
-    var repairTitle by remember(initialPart) { mutableStateOf(initialPart?.repairTitle.orEmpty()) }
+    val repairOptions = remember(availableRepairs) {
+        availableRepairs
+            .sortedBy { it.title.lowercase(Locale.getDefault()) }
+            .map { repair -> repair.id to repair.title }
+    }
+    val initialRepairSelection = remember(initialPart, repairOptions) {
+        repairOptions.firstOrNull { (repairId, repairTitle) ->
+            repairId == initialPart?.repairId || (initialPart?.repairId.isNullOrBlank() && repairTitle == initialPart?.repairTitle)
+        }?.first
+    }
+    var selectedRepairId by remember(initialPart, initialRepairSelection) { mutableStateOf(initialRepairSelection) }
     var quantity by remember(initialPart) { mutableStateOf(initialPart?.quantity?.toString() ?: "1") }
     var purchasePrice by remember(initialPart) { mutableStateOf(initialPart?.purchasePrice.orEmpty()) }
+    var isRepairPickerVisible by remember { mutableStateOf(false) }
+    val selectedRepairTitle = repairOptions.firstOrNull { it.first == selectedRepairId }?.second.orEmpty()
 
     val canSave = name.isNotBlank()
 
@@ -1925,13 +2078,61 @@ private fun ManualPartEntryDialog(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = "np. BMW / Lemforder"
                 )
-                GarageTextField(
-                    value = repairTitle,
-                    onValueChange = { repairTitle = it },
-                    label = "Do jakiej naprawy",
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = "Opcjonalnie"
-                )
+                TextButton(onClick = { isRepairPickerVisible = !isRepairPickerVisible }) {
+                    Text(
+                        if (selectedRepairTitle.isBlank()) {
+                            "Naprawa: brak przypisania"
+                        } else {
+                            "Naprawa: $selectedRepairTitle"
+                        }
+                    )
+                }
+                if (isRepairPickerVisible) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedRepairId = null
+                                    isRepairPickerVisible = false
+                                },
+                            color = if (selectedRepairId == null) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            } else {
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                            },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Brak przypisania",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                color = if (selectedRepairId == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        repairOptions.forEach { (repairId, repairTitle) ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedRepairId = repairId
+                                        isRepairPickerVisible = false
+                                    },
+                                color = if (repairId == selectedRepairId) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                } else {
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = repairTitle,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    color = if (repairId == selectedRepairId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
                 GarageTextField(
                     value = quantity,
                     onValueChange = { quantity = it },
@@ -1952,6 +2153,7 @@ private fun ManualPartEntryDialog(
             TextButton(
                 enabled = canSave,
                 onClick = {
+                    val repairTitle = repairOptions.firstOrNull { it.first == selectedRepairId }?.second
                     onSave(
                         PartInventoryItem(
                             id = nextId,
@@ -1959,12 +2161,12 @@ private fun ManualPartEntryDialog(
                             manufacturerPartNumber = manufacturerPartNumber.ifBlank { "do uzupelnienia" },
                             name = name,
                             manufacturer = manufacturer.ifBlank { "do uzupelnienia" },
-                            repairTitle = repairTitle.ifBlank { null },
+                            repairTitle = repairTitle,
                             quantity = quantity.toIntOrNull() ?: 1,
                             purchasePrice = purchasePrice.ifBlank { "do uzupelnienia" },
                             realOemUrl = initialPart?.realOemUrl,
                             photoUri = initialPart?.photoUri,
-                            repairId = initialPart?.repairId
+                            repairId = selectedRepairId
                         )
                     )
                 }
@@ -2164,13 +2366,24 @@ private fun ShoppingPartLookupDialog(
 @Composable
 fun ExternalPartLookupDialog(
     nextId: String,
+    availableRepairs: List<RepairProject>,
     initialRepairTitle: String = "",
     initialRepairId: String? = null,
     onDismiss: () -> Unit,
     onSave: (PartInventoryItem) -> Unit,
 ) {
     var partNumber by remember { mutableStateOf("") }
-    var repairTitle by remember { mutableStateOf(initialRepairTitle) }
+    val repairOptions = remember(availableRepairs) {
+        availableRepairs
+            .sortedBy { it.title.lowercase(Locale.getDefault()) }
+            .map { repair -> repair.id to repair.title }
+    }
+    val initialRepairSelection = remember(initialRepairId, initialRepairTitle, repairOptions) {
+        repairOptions.firstOrNull { (repairId, repairTitle) ->
+            repairId == initialRepairId || (initialRepairId.isNullOrBlank() && repairTitle == initialRepairTitle)
+        }?.first
+    }
+    var selectedRepairId by remember(initialRepairSelection) { mutableStateOf(initialRepairSelection) }
     var quantity by remember { mutableStateOf("1") }
     var lookupResults by remember { mutableStateOf(emptyList<MockPartLookupResult>()) }
     var selectedResult by remember { mutableStateOf<MockPartLookupResult?>(null) }
@@ -2180,6 +2393,8 @@ fun ExternalPartLookupDialog(
     var scanStatus by remember { mutableStateOf("Zrob zdjecie etykiety albo wybierz je z telefonu. Aplikacja sprobuje odczytac tekst, QR i kod kreskowy.") }
     var scannedManufacturerPartNumber by remember { mutableStateOf<String?>(null) }
     var scannedManufacturer by remember { mutableStateOf<String?>(null) }
+    var isRepairPickerVisible by remember { mutableStateOf(false) }
+    val selectedRepairTitle = repairOptions.firstOrNull { it.first == selectedRepairId }?.second.orEmpty()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val quantityValue = quantity.toIntOrNull()
@@ -2405,13 +2620,61 @@ fun ExternalPartLookupDialog(
                             onClick = { selectedResult = lookup }
                         )
                     }
-                    GarageTextField(
-                        value = repairTitle,
-                        onValueChange = { repairTitle = it },
-                        label = "Przypisz do naprawy",
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = "Opcjonalnie"
-                    )
+                    TextButton(onClick = { isRepairPickerVisible = !isRepairPickerVisible }) {
+                        Text(
+                            if (selectedRepairTitle.isBlank()) {
+                                "Naprawa: brak przypisania"
+                            } else {
+                                "Naprawa: $selectedRepairTitle"
+                            }
+                        )
+                    }
+                    if (isRepairPickerVisible) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedRepairId = null
+                                        isRepairPickerVisible = false
+                                    },
+                                color = if (selectedRepairId == null) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                } else {
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = "Brak przypisania",
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    color = if (selectedRepairId == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            repairOptions.forEach { (repairId, repairTitle) ->
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedRepairId = repairId
+                                            isRepairPickerVisible = false
+                                        },
+                                    color = if (repairId == selectedRepairId) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                    } else {
+                                        MaterialTheme.colorScheme.background.copy(alpha = 0.42f)
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = repairTitle,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        color = if (repairId == selectedRepairId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -2420,6 +2683,7 @@ fun ExternalPartLookupDialog(
                 enabled = canAddToInventory,
                 onClick = {
                     val lookup = selectedResult ?: return@TextButton
+                    val repairTitle = repairOptions.firstOrNull { it.first == selectedRepairId }?.second
                     onSave(
                         PartInventoryItem(
                             id = nextId,
@@ -2427,12 +2691,12 @@ fun ExternalPartLookupDialog(
                             manufacturerPartNumber = lookup.manufacturerPartNumber,
                             name = lookup.name,
                             manufacturer = lookup.manufacturer,
-                            repairTitle = repairTitle.ifBlank { null },
+                            repairTitle = repairTitle,
                             quantity = quantityValue ?: 1,
                             purchasePrice = lookup.shopPrice,
                             realOemUrl = lookup.realOemUrl,
                             photoUri = lookup.imageUrl,
-                            repairId = initialRepairId
+                            repairId = selectedRepairId
                         )
                     )
                 }

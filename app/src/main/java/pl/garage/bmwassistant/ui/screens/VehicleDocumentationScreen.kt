@@ -48,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -114,12 +115,12 @@ fun VehicleDocumentationScreen(
     onDocumentationUpdated: (RepairDocumentation) -> Unit,
     onBack: () -> Unit,
 ) {
-    var isGeneralExpanded by remember { mutableStateOf(true) }
-    var isRepairDocsExpanded by remember { mutableStateOf(true) }
-    var selectedDocumentation by remember {
+    var isGeneralExpanded by rememberSaveable(vehicle.id) { mutableStateOf(true) }
+    var isRepairDocsExpanded by rememberSaveable(vehicle.id) { mutableStateOf(true) }
+    var selectedDocumentationId by rememberSaveable(vehicle.id, initialRepairTitle) {
         mutableStateOf(
             initialRepairTitle?.let { repairTitle ->
-                repairDocumentation.firstOrNull { it.repairTitle == repairTitle }
+                repairDocumentation.firstOrNull { it.repairTitle == repairTitle }?.repairId
             }
         )
     }
@@ -143,12 +144,25 @@ fun VehicleDocumentationScreen(
     val documentationByArea = remember(archivedRepairDocumentation) {
         archivedRepairDocumentation.groupBy { it.area }
     }
+    val selectedDocumentation = remember(selectedDocumentationId, repairDocumentation) {
+        selectedDocumentationId?.let { repairId ->
+            repairDocumentation.firstOrNull { it.repairId == repairId }
+        }
+    }
+
+    LaunchedEffect(initialRepairTitle, repairDocumentation) {
+        if (selectedDocumentationId == null) {
+            selectedDocumentationId = initialRepairTitle?.let { repairTitle ->
+                repairDocumentation.firstOrNull { it.repairTitle == repairTitle }?.repairId
+            }
+        }
+    }
 
     fun closeDocumentationDetails() {
         if (returnToPreviousModuleOnBack) {
             onBack()
         } else {
-            selectedDocumentation = null
+            selectedDocumentationId = null
         }
     }
 
@@ -166,7 +180,7 @@ fun VehicleDocumentationScreen(
                 shoppingList.filter { item -> repair != null && item.belongsToRepair(repair) }
             },
             onDocumentationUpdated = { updatedDocumentation ->
-                selectedDocumentation = updatedDocumentation
+                selectedDocumentationId = updatedDocumentation.repairId
                 onDocumentationUpdated(updatedDocumentation)
             },
             onBack = { closeDocumentationDetails() }
@@ -227,7 +241,7 @@ fun VehicleDocumentationScreen(
                                 repairProjects = finishedRepairProjects,
                                 isExpanded = area in expandedRepairAreas,
                                 onDocumentationClick = { documentation ->
-                                    selectedDocumentation = documentation
+                                    selectedDocumentationId = documentation.repairId
                                 },
                                 onToggle = {
                                     expandedRepairAreas = if (area in expandedRepairAreas) {

@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,24 +86,30 @@ fun VehicleOverviewScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val garageRepository = remember { GarageRepository(context.applicationContext) }
-    var selectedModule by remember { mutableStateOf<VehicleModule?>(null) }
-    var isEditingVehicle by remember { mutableStateOf(false) }
-    var initialDocumentationRepairTitle by remember { mutableStateOf<String?>(null) }
-    var initialRepairListRepairId by remember { mutableStateOf<String?>(null) }
-    var initialRepairListRepairTitle by remember { mutableStateOf<String?>(null) }
-    var startAddRepairFlow by remember { mutableStateOf(false) }
-    var isQuickRepairActionOpen by remember { mutableStateOf(false) }
-    var initialShoppingRepairTitle by remember { mutableStateOf<String?>(null) }
-    var initialShoppingArea by remember { mutableStateOf<VehicleArea?>(null) }
-    var isDocumentationDetailsOpen by remember { mutableStateOf(false) }
-    var shouldReturnFromDocumentationToRepairs by remember { mutableStateOf(false) }
-    var shouldReturnFromShoppingToRepairs by remember { mutableStateOf(false) }
+    var selectedModuleType by rememberSaveable(currentVehicle.id) { mutableStateOf<VehicleModuleType?>(null) }
+    var isEditingVehicle by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
+    var initialDocumentationRepairTitle by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
+    var initialRepairListRepairId by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
+    var initialRepairListRepairTitle by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
+    var startAddRepairFlow by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
+    var isQuickRepairActionOpen by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
+    var initialShoppingRepairTitle by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
+    var initialShoppingAreaName by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
+    var isDocumentationDetailsOpen by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
+    var shouldReturnFromDocumentationToRepairs by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
+    var shouldReturnFromShoppingToRepairs by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var repairPendingExport by remember { mutableStateOf<RepairProject?>(null) }
     var pendingExportArchive by remember { mutableStateOf<ByteArray?>(null) }
     var pendingImportArchive by remember { mutableStateOf<ByteArray?>(null) }
     var pendingImportTitle by remember { mutableStateOf<String?>(null) }
     var pendingImportNewTitle by remember { mutableStateOf("") }
     var archiveTransferMessage by remember { mutableStateOf<String?>(null) }
+    val selectedModule = remember(selectedModuleType) {
+        selectedModuleType?.let { selectedType -> vehicleModules.firstOrNull { it.type == selectedType } }
+    }
+    val initialShoppingArea = remember(initialShoppingAreaName) {
+        initialShoppingAreaName?.let(VehicleArea::valueOf)
+    }
     var repairProjects by remember(currentVehicle.id) { mutableStateOf(emptyList<RepairProject>()) }
     var repairDocumentation by remember(currentVehicle.id) { mutableStateOf(emptyList<RepairDocumentation>()) }
     var shoppingListItems by remember(currentVehicle.id) { mutableStateOf(emptyList<ShoppingListItem>()) }
@@ -441,7 +448,7 @@ fun VehicleOverviewScreen(
             onAddRepair = {
                 isQuickRepairActionOpen = false
                 startAddRepairFlow = true
-                selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                selectedModuleType = VehicleModuleType.Repairs
             },
             onDismiss = { isQuickRepairActionOpen = false }
         )
@@ -449,7 +456,7 @@ fun VehicleOverviewScreen(
 
     BackHandler(enabled = selectedModule != null) {
         startAddRepairFlow = false
-        selectedModule = null
+        selectedModuleType = null
     }
 
     if (isEditingVehicle) {
@@ -473,11 +480,11 @@ fun VehicleOverviewScreen(
     val bottomItems = listOf("Przeglad", "Naprawy", "Czesci", "Dokumenty", "Wiecej")
 
     fun selectBottomItem(item: String) {
-        selectedModule = when (item) {
-            "Naprawy" -> vehicleModules.first { it.type == VehicleModuleType.Repairs }
-            "Czesci" -> vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
-            "Dokumenty" -> vehicleModules.first { it.type == VehicleModuleType.Documentation }
-            "Wiecej" -> vehicleModules.first { it.type == VehicleModuleType.Status }
+        selectedModuleType = when (item) {
+            "Naprawy" -> VehicleModuleType.Repairs
+            "Czesci" -> VehicleModuleType.PartsStorage
+            "Dokumenty" -> VehicleModuleType.Documentation
+            "Wiecej" -> VehicleModuleType.Status
             else -> null
         }
     }
@@ -494,7 +501,7 @@ fun VehicleOverviewScreen(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             },
-            onBack = { selectedModule = null }
+            onBack = { selectedModuleType = null }
         )
         return
     }
@@ -547,18 +554,18 @@ fun VehicleOverviewScreen(
                 initialRepairListRepairTitle = documentation.repairTitle
                 isDocumentationDetailsOpen = true
                 shouldReturnFromDocumentationToRepairs = true
-                selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
+                selectedModuleType = VehicleModuleType.Documentation
             },
             onDocumentationUpdated = { updatedDocumentation ->
                 upsertRepairDocumentation(updatedDocumentation)
             },
             onOpenShoppingList = { repair ->
                 initialShoppingRepairTitle = repair.title
-                initialShoppingArea = repair.area
+                initialShoppingAreaName = repair.area.name
                 initialRepairListRepairId = repair.id
                 initialRepairListRepairTitle = repair.title
                 shouldReturnFromShoppingToRepairs = true
-                selectedModule = vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
+                selectedModuleType = VehicleModuleType.PartsStorage
             },
             onAddShoppingItems = { items ->
                 appendShoppingItems(items)
@@ -584,7 +591,7 @@ fun VehicleOverviewScreen(
                 initialRepairListRepairId = null
                 initialRepairListRepairTitle = null
                 startAddRepairFlow = false
-                selectedModule = null
+                selectedModuleType = null
             },
             onBottomSelect = ::selectBottomItem
         )
@@ -612,15 +619,15 @@ fun VehicleOverviewScreen(
                 onOpenDocumentation = { documentation ->
                     initialDocumentationRepairTitle = documentation.repairTitle
                     isDocumentationDetailsOpen = true
-                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
+                    selectedModuleType = VehicleModuleType.Documentation
                 },
                 onDocumentationUpdated = { updatedDocumentation ->
                     upsertRepairDocumentation(updatedDocumentation)
                 },
                 onOpenShoppingList = { repair ->
                     initialShoppingRepairTitle = repair.title
-                    initialShoppingArea = repair.area
-                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.PartsStorage }
+                    initialShoppingAreaName = repair.area.name
+                    selectedModuleType = VehicleModuleType.PartsStorage
                 },
                 onAddShoppingItems = {},
                 onShoppingListUpdated = {},
@@ -642,7 +649,7 @@ fun VehicleOverviewScreen(
                 emptyText = "Brak zakonczonych napraw w archiwum.",
                 onBack = {
                     initialDocumentationRepairTitle = null
-                    selectedModule = null
+                    selectedModuleType = null
                 },
                 onBottomSelect = ::selectBottomItem
             )
@@ -663,11 +670,11 @@ fun VehicleOverviewScreen(
                 isDocumentationDetailsOpen = false
                 if (shouldReturnFromDocumentationToRepairs) {
                     shouldReturnFromDocumentationToRepairs = false
-                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                    selectedModuleType = VehicleModuleType.Repairs
                 } else {
                     initialRepairListRepairId = null
                     initialRepairListRepairTitle = null
-                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Documentation }
+                    selectedModuleType = VehicleModuleType.Documentation
                 }
             }
         )
@@ -677,19 +684,20 @@ fun VehicleOverviewScreen(
     if (selectedModule?.type == VehicleModuleType.PartsStorage) {
         VehiclePartsStorageScreen(
             vehicle = currentVehicle,
+            availableRepairs = repairProjects.filterNot { it.status.isFinishedRepairStatus() },
             inventoryParts = inventoryPartItems,
             shoppingList = shoppingListItems,
             consumables = sampleConsumablesFor(),
-            initialSection = if (initialShoppingRepairTitle == null) {
-                PartsStorageSection.Inventory
-            } else {
+            initialSection = if (initialShoppingRepairTitle != null) {
                 PartsStorageSection.Shopping
+            } else {
+                null
             },
             initialShoppingRepairTitle = initialShoppingRepairTitle,
             initialShoppingArea = initialShoppingArea,
             onInitialShoppingClosed = {
                 initialShoppingRepairTitle = null
-                initialShoppingArea = null
+                initialShoppingAreaName = null
             },
             onInventoryUpdated = { parts ->
                 updateInventoryParts(parts)
@@ -701,12 +709,12 @@ fun VehicleOverviewScreen(
                 if (shouldReturnFromShoppingToRepairs) {
                     shouldReturnFromShoppingToRepairs = false
                     initialShoppingRepairTitle = null
-                    initialShoppingArea = null
-                    selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                    initialShoppingAreaName = null
+                    selectedModuleType = VehicleModuleType.Repairs
                 } else {
                     initialShoppingRepairTitle = null
-                    initialShoppingArea = null
-                    selectedModule = null
+                    initialShoppingAreaName = null
+                    selectedModuleType = null
                 }
             },
             bottomBar = {
@@ -724,7 +732,7 @@ fun VehicleOverviewScreen(
     selectedModule?.let { module ->
         ModulePlaceholderDialog(
             module = module,
-            onDismiss = { selectedModule = null }
+            onDismiss = { selectedModuleType = null }
         )
     }
 
@@ -779,12 +787,12 @@ fun VehicleOverviewScreen(
                                     onClick = {
                                         initialRepairListRepairId = repair.id
                                         initialRepairListRepairTitle = repair.title
-                                        selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs }
+                                        selectedModuleType = VehicleModuleType.Repairs
                                     }
                                 )
                             }
                             TextButton(
-                                onClick = { selectedModule = vehicleModules.first { it.type == VehicleModuleType.Repairs } }
+                                onClick = { selectedModuleType = VehicleModuleType.Repairs }
                             ) {
                                 Text("Zobacz wszystkie")
                             }
