@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,6 +84,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -122,6 +124,8 @@ fun VehiclePartsStorageScreen(
     var shoppingItemPendingEdit by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingDeletion by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPendingAllegroActions by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPendingAllegroImport by remember { mutableStateOf<ShoppingListItem?>(null) }
     var selectedSectionName by rememberSaveable(vehicle.id, initialShoppingRepairTitle) {
         mutableStateOf(initialSection?.name)
     }
@@ -271,6 +275,32 @@ fun VehiclePartsStorageScreen(
         )
     }
 
+    shoppingItemPendingAllegroActions?.let { item ->
+        ShoppingItemAllegroActionsDialog(
+            item = item,
+            onDismiss = { shoppingItemPendingAllegroActions = null },
+            onOpenImport = {
+                shoppingItemPendingAllegroActions = null
+                shoppingItemPendingAllegroImport = item
+            }
+        )
+    }
+
+    shoppingItemPendingAllegroImport?.let { item ->
+        ImportAllegroOfferDialog(
+            item = item,
+            onDismiss = { shoppingItemPendingAllegroImport = null },
+            onSave = { updatedItem ->
+                updateShoppingList(
+                    storedShoppingList.map {
+                        if (it.stableId() == item.stableId()) updatedItem else it
+                    }
+                )
+                shoppingItemPendingAllegroImport = null
+            }
+        )
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -351,7 +381,8 @@ fun VehiclePartsStorageScreen(
                                     onDeleteItem = { shoppingItemPendingDeletion = it },
                                     onReceiveItem = { item ->
                                         shoppingItemPendingReceive = item
-                                    }
+                                    },
+                                    onAllegroAction = { shoppingItemPendingAllegroActions = it }
                                 )
                             }
                         }
@@ -447,6 +478,13 @@ data class ParsedPartLabel(
     val oemPartNumber: String?,
     val manufacturerPartNumber: String?,
     val manufacturer: String?,
+)
+
+private data class AllegroOfferDetails(
+    val title: String,
+    val price: String,
+    val imageUrl: String?,
+    val offerUrl: String,
 )
 
 enum class PartsStorageSection(val title: String) {
@@ -1269,6 +1307,7 @@ private fun ShoppingListSection(
     onEditItem: (ShoppingListItem) -> Unit,
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
+    onAllegroAction: (ShoppingListItem) -> Unit,
 ) {
     var expandedRepairTitles by rememberSaveable(shoppingList, initialRepairTitle) {
         mutableStateOf(
@@ -1315,7 +1354,8 @@ private fun ShoppingListSection(
                         },
                         onEditItem = onEditItem,
                         onDeleteItem = onDeleteItem,
-                        onReceiveItem = onReceiveItem
+                        onReceiveItem = onReceiveItem,
+                        onAllegroAction = onAllegroAction
                     )
                 }
         }
@@ -1331,6 +1371,7 @@ private fun ExpandableRepairShoppingGroup(
     onEditItem: (ShoppingListItem) -> Unit,
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
+    onAllegroAction: (ShoppingListItem) -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1404,7 +1445,8 @@ private fun ExpandableRepairShoppingGroup(
                     items = items,
                     onEditItem = onEditItem,
                     onDeleteItem = onDeleteItem,
-                    onReceiveItem = onReceiveItem
+                    onReceiveItem = onReceiveItem,
+                    onAllegroAction = onAllegroAction
                 )
             }
         }
@@ -1417,6 +1459,7 @@ private fun ShoppingCardList(
     onEditItem: (ShoppingListItem) -> Unit,
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
+    onAllegroAction: (ShoppingListItem) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         items.forEach { item ->
@@ -1424,7 +1467,8 @@ private fun ShoppingCardList(
                 item = item,
                 onEditItem = { onEditItem(item) },
                 onDeleteItem = { onDeleteItem(item) },
-                onReceiveItem = { onReceiveItem(item) }
+                onReceiveItem = { onReceiveItem(item) },
+                onAllegroAction = { onAllegroAction(item) }
             )
         }
     }
@@ -1436,6 +1480,7 @@ private fun ShoppingListItemCard(
     onEditItem: () -> Unit,
     onDeleteItem: () -> Unit,
     onReceiveItem: () -> Unit,
+    onAllegroAction: () -> Unit,
 ) {
     val manufacturerCode = item.manufacturerPartNumber.trim()
     val oemCode = item.partNumber.trim()
@@ -1444,7 +1489,12 @@ private fun ShoppingListItemCard(
             manufacturerCode.lowercase(Locale.getDefault()) != oemCode.lowercase(Locale.getDefault())
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {},
+                onLongClick = onAllegroAction
+            ),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -1541,6 +1591,186 @@ private fun ShoppingListItemCard(
             }
         }
     }
+}
+
+@Composable
+private fun ShoppingItemAllegroActionsDialog(
+    item: ShoppingListItem,
+    onDismiss: () -> Unit,
+    onOpenImport: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Allegro dla pozycji") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = item.name,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Przytrzymana pozycja moze pobrac cene i zdjecie z wklejonego linku Allegro.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onOpenImport) {
+                Text("Wklej link Allegro")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ImportAllegroOfferDialog(
+    item: ShoppingListItem,
+    onDismiss: () -> Unit,
+    onSave: (ShoppingListItem) -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    val coroutineScope = rememberCoroutineScope()
+    val suggestedQuery = remember(item) {
+        item.partNumber
+            .filter { it.isLetterOrDigit() }
+            .ifBlank { item.partNumber.trim() }
+    }
+    val suggestedSearchUrl = remember(suggestedQuery) { allegroSearchUrlFor(suggestedQuery) }
+    var offerUrl by remember(item) {
+        mutableStateOf(
+            item.shopUrl
+                ?.takeIf { it.isAllegroOfferUrl() }
+                .orEmpty()
+        )
+    }
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf<AllegroOfferDetails?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import ceny z Allegro") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = item.name,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "1. Otworz wyszukiwanie Allegro po numerze OEM. 2. Wybierz oferte. 3. Wklej link lub sam koniec adresu, a aplikacja sprobuje pobrac cene i zdjecie.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+                TextButton(onClick = { uriHandler.openUri(suggestedSearchUrl) }) {
+                    Text("Szukaj tej czesci na Allegro")
+                }
+                GarageTextField(
+                    value = offerUrl,
+                    onValueChange = {
+                        offerUrl = it
+                        errorMessage = null
+                        preview = null
+                    },
+                    label = "Link oferty Allegro",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Wklej pelny link oferty Allegro"
+                )
+                TextButton(
+                    enabled = offerUrl.isNotBlank() && !isLoading,
+                    onClick = {
+                        coroutineScope.launch {
+                            isLoading = true
+                            errorMessage = null
+                            preview = null
+                            val result = runCatching {
+                                fetchAllegroOfferDetails(
+                                    inputUrl = offerUrl
+                                )
+                            }
+                            preview = result.getOrNull()
+                            if (preview == null) {
+                                errorMessage = result.exceptionOrNull()?.message
+                                    ?: "Nie udalo sie pobrac danych z Allegro. Sklep mogl zablokowac automatyczny odczyt tej oferty."
+                            }
+                            isLoading = false
+                        }
+                    }
+                ) {
+                    Text(if (isLoading) "Pobieram..." else "Pobierz dane oferty")
+                }
+                errorMessage?.let { message ->
+                    EmptyPartsRow(message)
+                }
+                preview?.let { details ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            details.imageUrl?.let { imageUrl ->
+                                PartPhotoContent(
+                                    photoUri = imageUrl,
+                                    height = 130.dp,
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+                            Text(
+                                text = details.title,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            InventoryInfoPill(
+                                label = "Cena z Allegro",
+                                value = details.price,
+                                emphasize = true
+                            )
+                            Text(
+                                text = details.offerUrl,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = preview != null,
+                onClick = {
+                    val details = preview ?: return@TextButton
+                    onSave(
+                        item.copy(
+                            source = "allegro.pl",
+                            price = details.price,
+                            imageUri = details.imageUrl ?: item.imageUri,
+                            shopUrl = details.offerUrl
+                        )
+                    )
+                }
+            ) {
+                Text("Zapisz do pozycji")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Zamknij")
+            }
+        }
+    )
 }
 
 @Composable
@@ -3091,6 +3321,228 @@ private fun String.normalizeOcrNumber(): String =
 
 private fun decodeHtml(value: String): String =
     Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY).toString().trim()
+
+private fun allegroSearchUrlFor(query: String): String {
+    val normalizedQuery = query.ifBlank { "BMW czesci" }
+    val encoded = URLEncoder.encode(normalizedQuery, "UTF-8")
+    return "https://allegro.pl/listing?string=$encoded"
+}
+
+private fun String.isAllegroOfferUrl(): Boolean =
+    contains("allegro.pl/oferta/", ignoreCase = true) || startsWith("/oferta/", ignoreCase = true)
+
+private suspend fun fetchAllegroOfferDetails(
+    inputUrl: String,
+): AllegroOfferDetails = withContext(Dispatchers.IO) {
+    val normalizedUrl = normalizeAllegroOfferInput(inputUrl)
+        .substringBefore("?utm_", missingDelimiterValue = normalizeAllegroOfferInput(inputUrl))
+
+    if (!normalizedUrl.isAllegroOfferUrl()) {
+        throw IllegalArgumentException("Wklej link do oferty Allegro albo sam koniec adresu oferty.")
+    }
+
+    val connection = (URL(normalizedUrl).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        instanceFollowRedirects = true
+        connectTimeout = 10_000
+        readTimeout = 10_000
+        setRequestProperty(
+            "User-Agent",
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Mobile Safari/537.36"
+        )
+        setRequestProperty("Accept-Language", "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7")
+        setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        setRequestProperty("Cache-Control", "no-cache")
+    }
+
+    val responseStream = if (connection.responseCode >= 400) {
+        connection.errorStream ?: connection.inputStream
+    } else {
+        connection.inputStream
+    }
+
+    responseStream.bufferedReader().use { reader ->
+        val html = reader.readText()
+        parseAllegroOfferDetails(html, normalizedUrl)
+            ?: throw IllegalStateException(
+                if (html.contains("Please enable JS and disable any ad blocker", ignoreCase = true)) {
+                    "Allegro zablokowalo automatyczny odczyt tej oferty. Sprobuj innego linku lub zapisz dane recznie."
+                } else {
+                    "Nie udalo sie odczytac ceny albo zdjecia z tej oferty Allegro."
+                }
+            )
+    }
+}
+
+private fun parseAllegroOfferDetails(
+    html: String,
+    fallbackUrl: String,
+): AllegroOfferDetails? {
+    extractAllegroJsonLdDetails(html, fallbackUrl)?.let { return it }
+
+    val title = extractHtmlMetaContent(html, "property", "og:title")
+        ?: extractHtmlMetaContent(html, "name", "twitter:title")
+        ?: Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE)
+            .find(html)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.substringBefore(" - Allegro")
+            ?.let(::decodeHtml)
+            ?.takeIf { it.isNotBlank() }
+
+    val price = extractHtmlMetaContent(html, "property", "product:price:amount")
+        ?.let(::normalizeOfferPrice)
+        ?: Regex("\"price\"\\s*:\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE)
+            .find(html)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::normalizeOfferPrice)
+
+    val imageUrl = extractHtmlMetaContent(html, "property", "og:image")
+        ?: extractHtmlMetaContent(html, "name", "twitter:image")
+        ?: Regex("\"image\"\\s*:\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE)
+            .find(html)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let(::decodeHtml)
+
+    return if (title != null && price != null) {
+        AllegroOfferDetails(
+            title = title,
+            price = price,
+            imageUrl = imageUrl,
+            offerUrl = fallbackUrl
+        )
+    } else {
+        null
+    }
+}
+
+private fun extractAllegroJsonLdDetails(
+    html: String,
+    fallbackUrl: String,
+): AllegroOfferDetails? {
+    val scriptRegex = Regex(
+        "<script[^>]*type=\"application/ld\\+json\"[^>]*>(.*?)</script>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    scriptRegex.findAll(html).forEach { match ->
+        val rawJson = match.groupValues[1]
+        val details = runCatching {
+            val normalized = rawJson.trim()
+            when {
+                normalized.startsWith("[") -> JSONArray(normalized).toAllegroOfferDetails(fallbackUrl)
+                normalized.startsWith("{") -> JSONObject(normalized).toAllegroOfferDetails(fallbackUrl)
+                else -> null
+            }
+        }.getOrNull()
+        if (details != null) return details
+    }
+    return null
+}
+
+private fun JSONArray.toAllegroOfferDetails(fallbackUrl: String): AllegroOfferDetails? {
+    for (index in 0 until length()) {
+        val details = optJSONObject(index)?.toAllegroOfferDetails(fallbackUrl)
+        if (details != null) return details
+    }
+    return null
+}
+
+private fun JSONObject.toAllegroOfferDetails(fallbackUrl: String): AllegroOfferDetails? {
+    val type = optString("@type")
+    if (!type.contains("Product", ignoreCase = true) && !type.contains("Offer", ignoreCase = true)) {
+        return null
+    }
+
+    val title = optString("name").ifBlank { null }
+        ?: optJSONObject("itemOffered")?.optString("name")?.ifBlank { null }
+        ?: return null
+
+    val offersObject = optJSONObject("offers")
+        ?: optJSONArray("offers")?.optJSONObject(0)
+        ?: if (type.contains("Offer", ignoreCase = true)) this else null
+
+    val rawPrice = offersObject?.optString("price")?.ifBlank { null }
+        ?: return null
+    val currency = offersObject?.optString("priceCurrency")?.ifBlank { null } ?: "PLN"
+
+    val imageUrl = when (val imageValue = opt("image")) {
+        is JSONArray -> imageValue.optString(0).ifBlank { null }
+        is String -> imageValue.ifBlank { null }
+        else -> null
+    }
+
+    val offerUrl = offersObject?.optString("url")?.ifBlank { null }
+        ?: optString("url").ifBlank { null }
+        ?: fallbackUrl
+
+    return AllegroOfferDetails(
+        title = title,
+        price = normalizeOfferPrice("$rawPrice $currency"),
+        imageUrl = imageUrl,
+        offerUrl = offerUrl
+    )
+}
+
+private fun extractHtmlMetaContent(
+    html: String,
+    attributeName: String,
+    attributeValue: String,
+): String? {
+    val patterns = listOf(
+        Regex(
+            "<meta[^>]*$attributeName=[\"']${Regex.escape(attributeValue)}[\"'][^>]*content=[\"']([^\"']+)[\"'][^>]*>",
+            RegexOption.IGNORE_CASE
+        ),
+        Regex(
+            "<meta[^>]*content=[\"']([^\"']+)[\"'][^>]*$attributeName=[\"']${Regex.escape(attributeValue)}[\"'][^>]*>",
+            RegexOption.IGNORE_CASE
+        )
+    )
+    return patterns.firstNotNullOfOrNull { regex ->
+        regex.find(html)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let(::decodeHtml)
+            ?.takeIf { it.isNotBlank() }
+    }
+}
+
+private fun normalizeOfferPrice(value: String): String {
+    val parsed = parsePriceAmount(value)
+    return if (parsed != null) {
+        "%.2f PLN".format(Locale.US, parsed).replace('.', ',')
+    } else {
+        value
+            .replace("PLN", "", ignoreCase = true)
+            .trim()
+            .let { normalized ->
+                if (normalized.contains("PLN", ignoreCase = true)) normalized else "$normalized PLN"
+            }
+    }
+}
+
+private fun normalizeAllegroOfferInput(input: String): String {
+    val trimmed = input.trim()
+    if (trimmed.isBlank()) return trimmed
+
+    return when {
+        trimmed.contains("allegro.pl/oferta/", ignoreCase = true) -> trimmed.withHttpsPrefix()
+        trimmed.startsWith("/oferta/", ignoreCase = true) -> "https://allegro.pl$trimmed"
+        trimmed.startsWith("oferta/", ignoreCase = true) -> "https://allegro.pl/$trimmed"
+        trimmed.startsWith("m.allegro.pl/oferta/", ignoreCase = true) -> "https://$trimmed"
+        trimmed.contains("/") && !trimmed.contains(" ") -> "https://allegro.pl/oferta/${trimmed.trimStart('/')}"
+        else -> trimmed.withHttpsPrefix()
+    }
+}
+
+private fun String.withHttpsPrefix(): String =
+    when {
+        startsWith("http://", ignoreCase = true) || startsWith("https://", ignoreCase = true) -> this
+        else -> "https://$this"
+    }
 
 @Preview(showBackground = true, widthDp = 430)
 @Composable
