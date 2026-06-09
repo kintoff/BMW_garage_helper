@@ -30,8 +30,11 @@ fun GarageApp() {
     val roomMigrator = remember { LegacyStorageRoomMigrator(context.applicationContext) }
     val vehicles = remember { mutableStateListOf<Vehicle>() }
     var isAddingVehicle by rememberSaveable { mutableStateOf(false) }
-    var selectedVehicle by remember { mutableStateOf<Vehicle?>(null) }
+    var selectedVehicleId by rememberSaveable { mutableStateOf<String?>(null) }
     var vehiclePendingDeletion by remember { mutableStateOf<Vehicle?>(null) }
+    val selectedVehicle = selectedVehicleId?.let { vehicleId ->
+        vehicles.firstOrNull { it.id == vehicleId }
+    }
 
     LaunchedEffect(roomMigrator, garageRepository) {
         val loadedVehicles = withContext(Dispatchers.IO) {
@@ -44,7 +47,7 @@ fun GarageApp() {
 
     BackHandler(enabled = selectedVehicle != null || isAddingVehicle) {
         when {
-            selectedVehicle != null -> selectedVehicle = null
+            selectedVehicle != null -> selectedVehicleId = null
             isAddingVehicle -> isAddingVehicle = false
         }
     }
@@ -56,7 +59,7 @@ fun GarageApp() {
                 vehicles.remove(vehicle)
                 vehiclePendingDeletion = null
                 if (selectedVehicle?.id == vehicle.id) {
-                    selectedVehicle = null
+                    selectedVehicleId = null
                 }
                 coroutineScope.launch(Dispatchers.IO) {
                     garageRepository.deleteVehicle(vehicle.id)
@@ -69,7 +72,7 @@ fun GarageApp() {
     when {
         selectedVehicle != null -> VehicleOverviewScreen(
             vehicle = selectedVehicle,
-            onBack = { selectedVehicle = null },
+            onBack = { selectedVehicleId = null },
             onVehicleUpdated = { updatedVehicle ->
                 coroutineScope.launch(Dispatchers.IO) {
                     val savedVehicle = garageRepository.saveVehicle(updatedVehicle)
@@ -78,7 +81,7 @@ fun GarageApp() {
                         if (index >= 0) {
                             vehicles[index] = savedVehicle
                         }
-                        selectedVehicle = savedVehicle
+                        selectedVehicleId = savedVehicle.id
                     }
                 }
             }
@@ -100,7 +103,7 @@ fun GarageApp() {
         else -> GarageDashboard(
             vehicles = vehicles,
             onAddVehicle = { isAddingVehicle = true },
-            onOpenVehicle = { selectedVehicle = it },
+            onOpenVehicle = { selectedVehicleId = it.id },
             onCopyVehicle = { vehicle ->
                 coroutineScope.launch(Dispatchers.IO) {
                     val duplicatedVehicle = garageRepository.saveVehicle(vehicle.copyAsDuplicate())

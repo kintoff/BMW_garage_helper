@@ -67,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -180,16 +181,30 @@ fun VehicleRepairListScreen(
                 .ifEmpty { setOf(VehicleArea.Engine) }
         )
     }
-    var isChoosingRepairArea by remember { mutableStateOf(false) }
-    var selectedAreaForNewRepair by remember { mutableStateOf<VehicleArea?>(null) }
-    var selectedRepair by remember(initialRepairId, initialRepairTitle, visibleRepairs) {
+    var isChoosingRepairArea by rememberSaveable(vehicle.id, showArchivedRepairs) { mutableStateOf(false) }
+    var selectedAreaForNewRepairName by rememberSaveable(vehicle.id, showArchivedRepairs) { mutableStateOf<String?>(null) }
+    var selectedRepairId by rememberSaveable(vehicle.id, showArchivedRepairs, initialRepairId, initialRepairTitle) {
         mutableStateOf(
             initialRepairId
-                ?.let { repairId -> visibleRepairs.firstOrNull { it.id == repairId } }
                 ?: initialRepairTitle?.let { repairTitle ->
-                    visibleRepairs.firstOrNull { it.title == repairTitle }
+                    visibleRepairs.firstOrNull { it.title == repairTitle }?.id
                 }
         )
+    }
+    val selectedRepair = remember(selectedRepairId, visibleRepairs) {
+        selectedRepairId?.let { repairId -> visibleRepairs.firstOrNull { it.id == repairId } }
+    }
+    val selectedAreaForNewRepair = remember(selectedAreaForNewRepairName) {
+        selectedAreaForNewRepairName?.let(VehicleArea::valueOf)
+    }
+
+    LaunchedEffect(initialRepairId, initialRepairTitle, visibleRepairs) {
+        if (selectedRepairId == null) {
+            selectedRepairId = initialRepairId
+                ?: initialRepairTitle?.let { repairTitle ->
+                    visibleRepairs.firstOrNull { it.title == repairTitle }?.id
+                }
+        }
     }
 
     LaunchedEffect(startAddRepairFlow) {
@@ -200,7 +215,7 @@ fun VehicleRepairListScreen(
     }
 
     BackHandler(enabled = selectedRepair != null) {
-        selectedRepair = null
+        selectedRepairId = null
         onInitialRepairClosed()
     }
 
@@ -221,7 +236,7 @@ fun VehicleRepairListScreen(
             onInventoryPartAdded = onInventoryPartAdded,
             onExportRepair = onExportRepair,
             onRepairUpdated = { updatedRepair ->
-                selectedRepair = updatedRepair
+                selectedRepairId = updatedRepair.id
                 onRepairUpdated(updatedRepair)
             },
             bottomBar = {
@@ -232,7 +247,7 @@ fun VehicleRepairListScreen(
                 )
             },
             onBack = {
-                selectedRepair = null
+                selectedRepairId = null
                 onInitialRepairClosed()
             }
         )
@@ -242,7 +257,7 @@ fun VehicleRepairListScreen(
     if (isChoosingRepairArea) {
         RepairAreaPickerDialog(
             onAreaSelected = { area ->
-                selectedAreaForNewRepair = area
+                selectedAreaForNewRepairName = area.name
                 isChoosingRepairArea = false
             },
             onDismiss = { isChoosingRepairArea = false }
@@ -257,10 +272,10 @@ fun VehicleRepairListScreen(
             onSave = { repair, documentation ->
                 onRepairAdded(repair, documentation)
                 expandedAreas = expandedAreas + area
-                selectedAreaForNewRepair = null
-                selectedRepair = repair
+                selectedAreaForNewRepairName = null
+                selectedRepairId = repair.id
             },
-            onDismiss = { selectedAreaForNewRepair = null }
+            onDismiss = { selectedAreaForNewRepairName = null }
         )
     }
 
@@ -345,7 +360,7 @@ fun VehicleRepairListScreen(
                                         showCompleteAction = false,
                                         onComplete = {},
                                         onExport = onExportRepair?.let { export -> { export(repair) } },
-                                        onClick = { selectedRepair = repair }
+                                        onClick = { selectedRepairId = repair.id }
                                     )
                                 }
                             }
@@ -366,7 +381,7 @@ fun VehicleRepairListScreen(
                                 onRepairUpdated(repair.copy(status = "Zakonczona"))
                             },
                             onExport = null,
-                            onClick = { selectedRepair = repair }
+                            onClick = { selectedRepairId = repair.id }
                         )
                     }
                 }
@@ -918,8 +933,8 @@ private fun RepairDetailsScreen(
     bottomBar: (@Composable BoxScope.() -> Unit)? = null,
     onBack: () -> Unit,
 ) {
-    var isCatalogVisible by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableStateOf("Opis") }
+    var isCatalogVisible by rememberSaveable(repair.id) { mutableStateOf(false) }
+    var selectedTab by rememberSaveable(repair.id) { mutableStateOf("Opis") }
 
     if (isCatalogVisible) {
         RealOemSchematicsDialog(
@@ -1236,8 +1251,10 @@ private fun RepairPartsTab(
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
 ) {
     var itemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
-    var isAddPartDialogVisible by remember { mutableStateOf(false) }
     var isAddInventoryDialogVisible by remember { mutableStateOf(false) }
+    val shoppingValue = remember(shoppingItems) { shoppingItems.sumOf { repairPartValue(it.price, it.quantity) } }
+    val inventoryValue = remember(availableParts) { availableParts.sumOf { repairPartValue(it.purchasePrice, it.quantity) } }
+    val totalValue = shoppingValue + inventoryValue
 
     if (!isArchivedMode) {
         itemPendingReceive?.let { item ->
@@ -1253,23 +1270,10 @@ private fun RepairPartsTab(
         }
     }
 
-    if (!isArchivedMode && isAddPartDialogVisible) {
-        AddRepairPartDestinationDialog(
-            onShoppingList = {
-                isAddPartDialogVisible = false
-                onOpenShoppingList()
-            },
-            onInventory = {
-                isAddPartDialogVisible = false
-                isAddInventoryDialogVisible = true
-            },
-            onDismiss = { isAddPartDialogVisible = false }
-        )
-    }
-
     if (!isArchivedMode && isAddInventoryDialogVisible) {
         ExternalPartLookupDialog(
             nextId = nextInventoryId(availableParts),
+            availableRepairs = listOf(repair),
             initialRepairTitle = repair.title,
             initialRepairId = repair.id,
             onDismiss = { isAddInventoryDialogVisible = false },
@@ -1281,6 +1285,34 @@ private fun RepairPartsTab(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        GaragePanel {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Wartosc czesci",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    RepairPartsMetric(
+                        label = "Lista zakupow",
+                        value = repairCurrencyLabel(shoppingValue)
+                    )
+                    RepairPartsMetric(
+                        label = "Na stanie",
+                        value = repairCurrencyLabel(inventoryValue)
+                    )
+                    RepairPartsMetric(
+                        label = "Razem",
+                        value = repairCurrencyLabel(totalValue),
+                        emphasize = true
+                    )
+                }
+            }
+        }
+
         Text(
             text = "Lista zakupow",
             fontSize = 18.sp,
@@ -1327,15 +1359,10 @@ private fun RepairPartsTab(
         }
 
         if (!isArchivedMode) {
-            GaragePanel(onClick = onOpenCatalog) {
-                Text("Schematy czescidobmw.pl", fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = "Otworz schematy po VIN i dodaj OEM-y do listy zakupow.",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
-                )
-            }
-
-            AddPartToRepairButton(onClick = { isAddPartDialogVisible = true })
+            AddPartToRepairButton(
+                label = "Schematy czescidobmw.pl",
+                onClick = onOpenCatalog
+            )
         }
     }
 }
@@ -1350,6 +1377,7 @@ private fun ShoppingPartSummaryRow(
         title = item.name,
         subtitle = item.manufacturerPartNumber.ifBlank { item.partNumber.ifBlank { item.source } },
         quantity = "${item.quantity} szt.",
+        value = item.price,
         badgeText = if (isArchived) "Historia" else "▣",
         badgeColor = AccentBlue,
         photoUri = item.imageUri,
@@ -1366,6 +1394,7 @@ private fun InventoryPartSummaryRow(
         title = part.name,
         subtitle = part.manufacturerPartNumber.ifBlank { part.partNumber },
         quantity = "${part.quantity} szt.",
+        value = part.purchasePrice,
         badgeText = if (neededQuantity > 0) "${part.quantity}/$neededQuantity" else "Na stanie",
         badgeColor = if (neededQuantity > 0 && part.quantity < neededQuantity) AccentYellow else AccentGreen,
         photoUri = part.photoUri
@@ -1377,6 +1406,7 @@ private fun PartSummaryRow(
     title: String,
     subtitle: String,
     quantity: String,
+    value: String,
     badgeText: String,
     badgeColor: Color,
     photoUri: String? = null,
@@ -1390,11 +1420,15 @@ private fun PartSummaryRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Surface(
-            modifier = Modifier.size(46.dp),
+            modifier = Modifier.size(64.dp),
             color = MaterialTheme.colorScheme.background.copy(alpha = 0.62f),
-            shape = RoundedCornerShape(8.dp)
+            shape = RoundedCornerShape(10.dp)
         ) {
-            PartPhotoContent(photoUri = photoUri, height = 46.dp)
+            PartPhotoContent(
+                photoUri = photoUri,
+                height = 64.dp,
+                contentScale = ContentScale.Fit
+            )
         }
         Column(
             modifier = Modifier.weight(1f),
@@ -1402,41 +1436,56 @@ private fun PartSummaryRow(
         ) {
             Text(
                 text = title,
-                fontSize = 15.sp,
+                fontSize = partSummaryTitleSize(title),
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 text = subtitle.ifBlank { "Bez numeru czesci" },
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.64f),
                 fontSize = 13.sp,
-                maxLines = 1
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
-        Text(
-            text = quantity,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-        Surface(
-            modifier = Modifier
-                .then(if (onBadgeClick != null) Modifier.clickable(onClick = onBadgeClick) else Modifier),
-            color = badgeColor.copy(alpha = 0.18f),
-            shape = RoundedCornerShape(8.dp)
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = badgeText,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                color = badgeColor,
+                text = quantity,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold
             )
+            Text(
+                text = value.ifBlank { "Brak ceny" },
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Surface(
+                modifier = Modifier
+                    .then(if (onBadgeClick != null) Modifier.clickable(onClick = onBadgeClick) else Modifier),
+                color = badgeColor.copy(alpha = 0.18f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = badgeText,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    color = badgeColor,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun AddPartToRepairButton(onClick: () -> Unit) {
+private fun AddPartToRepairButton(
+    label: String,
+    onClick: () -> Unit,
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1447,7 +1496,7 @@ private fun AddPartToRepairButton(onClick: () -> Unit) {
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
-                text = "+  Dodaj czesc",
+                text = label,
                 color = MaterialTheme.colorScheme.onPrimary,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold
@@ -1455,6 +1504,51 @@ private fun AddPartToRepairButton(onClick: () -> Unit) {
         }
     }
 }
+
+@Composable
+private fun RepairPartsMetric(
+    label: String,
+    value: String,
+    emphasize: Boolean = false,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+            fontSize = 12.sp
+        )
+        Text(
+            text = value,
+            color = if (emphasize) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            fontSize = if (emphasize) 16.sp else 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+private fun repairCurrencyLabel(value: Double): String =
+    if (value > 0.0) "%.2f PLN".format(java.util.Locale.US, value).replace('.', ',') else "0,00 PLN"
+
+private fun repairPartValue(price: String, quantity: Int): Double =
+    parseRepairPartPrice(price)?.times(quantity) ?: 0.0
+
+private fun parseRepairPartPrice(value: String): Double? {
+    val normalized = value
+        .replace("PLN", "", ignoreCase = true)
+        .replace("zl", "", ignoreCase = true)
+        .replace("zł", "", ignoreCase = true)
+        .replace(" ", "")
+        .replace(",", ".")
+    val matched = Regex("""\d+(\.\d+)?""").find(normalized)?.value ?: return null
+    return matched.toDoubleOrNull()
+}
+
+private fun partSummaryTitleSize(title: String) =
+    when {
+        title.length > 42 -> 13.sp
+        title.length > 28 -> 14.sp
+        else -> 15.sp
+    }
 
 @Composable
 private fun AddRepairPartDestinationDialog(
@@ -2727,18 +2821,27 @@ private fun RepairTorqueTab(
     onDocumentationUpdated: (RepairDocumentation) -> Unit,
 ) {
     val context = LocalContext.current
-    var mode by remember { mutableStateOf("Lista") }
-    var selectedTorqueIndex by remember { mutableStateOf(0) }
+    var mode by rememberSaveable(repair.id) { mutableStateOf("Lista") }
+    var selectedTorqueIndex by rememberSaveable(repair.id) { mutableStateOf(0) }
     val tables = documentation?.effectiveTorqueTables().orEmpty()
-    var selectedTableId by remember(documentation?.repairId, tables.size) {
+    var selectedTableId by rememberSaveable(documentation?.repairId, tables.map { it.id }) {
         mutableStateOf(tables.firstOrNull()?.id)
     }
     val activeTable = tables.firstOrNull { it.id == selectedTableId } ?: tables.firstOrNull()
-    var isChoosingTorqueAddType by remember { mutableStateOf(false) }
-    var isAddingTorqueSpecManually by remember { mutableStateOf(false) }
-    var torqueImportStatus by remember { mutableStateOf<String?>(null) }
-    var tablePendingDelete by remember { mutableStateOf<TorqueSpecTable?>(null) }
+    var isChoosingTorqueAddType by rememberSaveable(repair.id) { mutableStateOf(false) }
+    var isAddingTorqueSpecManually by rememberSaveable(repair.id) { mutableStateOf(false) }
+    var torqueImportStatus by rememberSaveable(repair.id) { mutableStateOf<String?>(null) }
+    var tablePendingDeleteId by rememberSaveable(repair.id) { mutableStateOf<String?>(null) }
+    val tablePendingDelete = remember(tablePendingDeleteId, tables) {
+        tablePendingDeleteId?.let { tableId -> tables.firstOrNull { it.id == tableId } }
+    }
     val specs = activeTable?.torqueSpecs.orEmpty()
+
+    LaunchedEffect(activeTable?.id) {
+        if (selectedTableId == null && activeTable != null) {
+            selectedTableId = activeTable.id
+        }
+    }
 
     fun baseDocumentation(): RepairDocumentation =
         documentation ?: RepairDocumentation(
@@ -2849,7 +2952,7 @@ private fun RepairTorqueTab(
 
     tablePendingDelete?.let { table ->
         AlertDialog(
-            onDismissRequest = { tablePendingDelete = null },
+            onDismissRequest = { tablePendingDeleteId = null },
             title = { Text("Usun schemat momentow?") },
             text = {
                 Text(
@@ -2864,14 +2967,14 @@ private fun RepairTorqueTab(
                         selectedTorqueIndex = 0
                         updateTorqueTables(updatedTables)
                         torqueImportStatus = "Usunieto schemat momentow."
-                        tablePendingDelete = null
+                        tablePendingDeleteId = null
                     }
                 ) {
                     Text("Usun")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { tablePendingDelete = null }) {
+                TextButton(onClick = { tablePendingDeleteId = null }) {
                     Text("Anuluj")
                 }
             }
@@ -2892,7 +2995,7 @@ private fun RepairTorqueTab(
                     selectedTableId = it.id
                     selectedTorqueIndex = 0
                 },
-                onDelete = { tablePendingDelete = it }
+                onDelete = { tablePendingDeleteId = it.id }
             )
         }
         if (mode == "Lista") {
