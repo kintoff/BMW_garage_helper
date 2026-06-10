@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -206,6 +207,7 @@ fun GarageDashboard(
                         Surface(
                             modifier = Modifier
                                 .size(48.dp)
+                                .testTag("dashboard_add_vehicle_button")
                                 .clickable(onClick = onAddVehicle),
                             shape = CircleShape,
                             color = Color(0xFF1B2A38)
@@ -431,6 +433,7 @@ private fun GarageVehicleCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag(vehicleCardTag(vehicle))
             .combinedClickable(onClick = onOpen, onLongClick = onLongPress),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF13232F).copy(alpha = 0.92f)),
@@ -480,6 +483,7 @@ private fun AddVehicleWideCard(onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(70.dp)
+            .testTag("dashboard_add_vehicle_card")
             .drawBehind {
                 drawRoundRect(
                     color = Color.White.copy(alpha = 0.28f),
@@ -610,4 +614,13 @@ private sealed interface AppUpdateCardState {
     ) : AppUpdateCardState
 
     data class Error(val message: String) : AppUpdateCardState
+}
+
+private fun vehicleCardTag(vehicle: Vehicle): String {
+    val normalizedName = vehicle.displayName
+        .lowercase()
+        .replace(Regex("[^a-z0-9]+"), "_")
+        .trim('_')
+        .ifBlank { "vehicle" }
+    return "vehicle_card_$normalizedName"
 }

@@ -82,6 +82,32 @@ W repo jest przygotowany workflow:
 
 - [.github/workflows/release-apk.yml](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/.github/workflows/release-apk.yml)
 
+## Testy regresyjne i CI
+
+W repo jest tez przygotowany osobny workflow testowy:
+
+- [.github/workflows/android-tests.yml](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/.github/workflows/android-tests.yml)
+
+Co uruchamia sie automatycznie:
+
+- przy `push`,
+- przy `pull_request`,
+- recznie z zakladki `Actions`.
+
+Zakres workflow:
+
+- `:app:testDebugUnitTest` dla szybkich testow logiki,
+- `:app:connectedDebugAndroidTest` na emulatorze Androida dla testow Room i UI Compose.
+
+Lokalnie przed wypchnieciem zmian warto uruchomic:
+
+```bash
+./gradlew :app:testDebugUnitTest
+./gradlew :app:connectedDebugAndroidTest
+```
+
+Druga komenda wymaga uruchomionego emulatora albo urzadzenia testowego.
+
 Przed pierwszym wydaniem ustaw w `GitHub -> Settings -> Secrets and variables -> Actions` sekrety:
 
 - `ANDROID_KEYSTORE_BASE64`

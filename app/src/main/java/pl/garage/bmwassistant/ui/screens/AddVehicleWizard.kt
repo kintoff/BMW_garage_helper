@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
@@ -118,7 +119,9 @@ fun AddVehicleWizard(
         color = MaterialTheme.colorScheme.background
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("add_vehicle_wizard_list"),
             contentPadding = PaddingValues(18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -165,7 +168,9 @@ fun AddVehicleWizard(
                         value = model,
                         onValueChange = { model = it },
                         label = "Model",
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_vehicle_model_field"),
                         placeholder = "np. E60 520d"
                     )
                     GarageTextField(
@@ -179,7 +184,9 @@ fun AddVehicleWizard(
                         value = engine,
                         onValueChange = { engine = it },
                         label = "Silnik",
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_vehicle_engine_field"),
                         placeholder = "np. M47N2 2.0d"
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -256,7 +263,9 @@ fun AddVehicleWizard(
                             )
                         },
                         enabled = canSave,
-                        modifier = Modifier.weight(if (onCancel == null) 1f else 1.4f)
+                        modifier = Modifier
+                            .weight(if (onCancel == null) 1f else 1.4f)
+                            .testTag("add_vehicle_save_button")
                     ) {
                         Text(saveLabel)
                     }
