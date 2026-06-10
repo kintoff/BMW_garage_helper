@@ -94,19 +94,40 @@ Co uruchamia sie automatycznie:
 - przy `pull_request`,
 - recznie z zakladki `Actions`.
 
-Zakres workflow:
+Zakres workflow w GitHub:
 
-- `:app:testDebugUnitTest` dla szybkich testow logiki,
-- `:app:connectedDebugAndroidTest` na emulatorze Androida dla testow Room i UI Compose.
+- `:app:testDebugUnitTest` dla szybkich testow logiki.
 
-Lokalnie przed wypchnieciem zmian warto uruchomic:
+Pelne testy regresyjne odpalamy lokalnie na podlaczonym telefonie. To jest celowy wybor:
+
+- mniej problemow z emulatorami w CI,
+- bardziej realne srodowisko testowe,
+- prostszy workflow do nauki i codziennej pracy.
+
+Gotowe skrypty lokalne:
+
+- [scripts/run-unit-tests.sh](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/scripts/run-unit-tests.sh) uruchamia szybkie testy logiki,
+- [scripts/run-device-tests.sh](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/scripts/run-device-tests.sh) uruchamia testy Room i UI Compose na podlaczonym telefonie,
+- [scripts/run-local-regression.sh](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/scripts/run-local-regression.sh) odpala caly lokalny pakiet regresji.
+
+Najwygodniejszy wariant przed pushem:
 
 ```bash
-./gradlew :app:testDebugUnitTest
-./gradlew :app:connectedDebugAndroidTest
+./scripts/run-local-regression.sh
 ```
 
-Druga komenda wymaga uruchomionego emulatora albo urzadzenia testowego.
+Albo osobno:
+
+```bash
+./scripts/run-unit-tests.sh
+./scripts/run-device-tests.sh
+```
+
+Skrypt testow na telefonie wymaga:
+
+- podlaczonego telefonu przez USB,
+- wlaczonego debugowania USB,
+- zaakceptowanego polaczenia ADB na telefonie.
 
 Przed pierwszym wydaniem ustaw w `GitHub -> Settings -> Secrets and variables -> Actions` sekrety:
 
