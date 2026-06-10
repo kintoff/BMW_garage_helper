@@ -17,4 +17,8 @@ if ! adb get-state >/dev/null 2>&1; then
 fi
 
 echo "Uruchamiam testy instrumentacyjne na podlaczonym urzadzeniu..."
+echo "Czyszcze projekt przed testami na urzadzeniu..."
+./gradlew clean
+
+echo "Buduje i uruchamiam testy instrumentacyjne..."
 ./gradlew :app:connectedDebugAndroidTest

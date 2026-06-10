@@ -1,6 +1,8 @@
 package pl.garage.bmwassistant
 
+import androidx.activity.compose.setContent
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -30,13 +32,11 @@ class GarageAppUiRegressionTest {
 
     @Before
     fun setUp() {
-        TestComposeContentRegistry.content = {
+        setTestContent {
             GarageTheme {
                 androidx.compose.material3.Text("Test host ready")
             }
         }
-        composeRule.activityRule.scenario.recreate()
-        composeRule.waitForIdle()
     }
 
     @Test
@@ -55,7 +55,7 @@ class GarageAppUiRegressionTest {
         var addClicked = false
         var openedVehicle: Vehicle? = null
 
-        TestComposeContentRegistry.content = {
+        setTestContent {
             CompositionLocalProvider(LocalInspectionMode provides true) {
                 GarageTheme {
                     GarageDashboard(
@@ -68,8 +68,6 @@ class GarageAppUiRegressionTest {
                 }
             }
         }
-        composeRule.activityRule.scenario.recreate()
-        composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("dashboard_add_vehicle_button").performClick()
         assertTrue(addClicked)
@@ -83,15 +81,13 @@ class GarageAppUiRegressionTest {
     fun addVehicleWizardCreatesVehicleFromTemplate() {
         var savedVehicle: Vehicle? = null
 
-        TestComposeContentRegistry.content = {
+        setTestContent {
             GarageTheme {
                 AddVehicleWizard(
                     onVehicleCreated = { savedVehicle = it }
                 )
             }
         }
-        composeRule.activityRule.scenario.recreate()
-        composeRule.waitForIdle()
 
         composeRule.onNodeWithText("Uzyj E61").performClick()
         composeRule
@@ -106,5 +102,14 @@ class GarageAppUiRegressionTest {
         assertEquals("E61 520d", savedVehicle?.model)
         assertEquals("M47N2 2.0d", savedVehicle?.engine)
         assertEquals("E61", savedVehicle?.generation)
+    }
+
+    private fun setTestContent(content: @Composable () -> Unit) {
+        composeRule.runOnUiThread {
+            composeRule.activity.setContent {
+                content()
+            }
+        }
+        composeRule.waitForIdle()
     }
 }
