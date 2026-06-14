@@ -83,6 +83,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -1146,10 +1147,13 @@ private fun RepairOverviewTab(
                     value = newCheckpointText,
                     onValueChange = { newCheckpointText = it },
                     label = "Checkpoint",
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("repair_checkpoint_input"),
                     placeholder = "Nowy checkpoint"
                 )
                 TextButton(
+                    modifier = Modifier.testTag("repair_add_checkpoint_button"),
                     enabled = newCheckpointText.isNotBlank(),
                     onClick = {
                         val updatedCheckpoints = checkpoints + RepairCheckpoint(
@@ -1175,7 +1179,9 @@ private fun RepairCheckpointRow(
     onDelete: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("repair_checkpoint_row_${checkpoint.id}"),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1190,10 +1196,16 @@ private fun RepairCheckpointRow(
                 alpha = if (checkpoint.isDone) 0.52f else 0.82f
             )
         )
-        TextButton(onClick = onEdit) {
+        TextButton(
+            modifier = Modifier.testTag("repair_checkpoint_edit_${checkpoint.id}"),
+            onClick = onEdit
+        ) {
             Text("Edytuj")
         }
-        TextButton(onClick = onDelete) {
+        TextButton(
+            modifier = Modifier.testTag("repair_checkpoint_delete_${checkpoint.id}"),
+            onClick = onDelete
+        ) {
             Text("Usun")
         }
     }
@@ -1218,12 +1230,15 @@ private fun EditCheckpointDialog(
                 value = textDraft,
                 onValueChange = { textDraft = it },
                 label = "Checkpoint",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("repair_edit_checkpoint_input"),
                 placeholder = "Co trzeba zrobic?"
             )
         },
         confirmButton = {
             TextButton(
+                modifier = Modifier.testTag("repair_edit_checkpoint_save_button"),
                 enabled = trimmedText.isNotBlank(),
                 onClick = { onSave(trimmedText) }
             ) {
@@ -3988,27 +4003,6 @@ private fun TorqueSpec.isUsableTorqueSpec(): Boolean =
         component.trim() != "-" &&
         torque.trim() != "-"
 
-private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
-    torqueTables.ifEmpty {
-        if (
-            torqueSpecs.isEmpty() &&
-            torqueDiagramImageUri == null &&
-            torqueDiagramAssignments.isEmpty()
-        ) {
-            emptyList()
-        } else {
-            listOf(
-                TorqueSpecTable(
-                    id = "table-1",
-                    title = "Tabela momentow 1",
-                    torqueSpecs = torqueSpecs,
-                    diagramImageUri = torqueDiagramImageUri,
-                    diagramAssignments = torqueDiagramAssignments
-                )
-            )
-        }
-    }
-
 private fun defaultTorqueAssignments(count: Int): List<TorqueDiagramAssignment> {
     val positions = listOf(
         Offset(0.22f, 0.28f),
@@ -4431,44 +4425,6 @@ private fun PersonalDocumentationItem.documentBadge(): String =
             }
         }
 
-private fun RepairDocumentation.effectiveTisDocuments(): List<TisDocumentationLink> =
-    tisDocuments.ifEmpty {
-        tisLinks.map { url ->
-            TisDocumentationLink(
-                title = url,
-                url = url
-            )
-        }
-    }
-
-private fun RepairDocumentation.effectiveYoutubeVideos(): List<YoutubeVideo> =
-    youtubeVideos.ifEmpty {
-        youtubeLinks.map { url ->
-            YoutubeVideo(
-                title = "Film YouTube",
-                url = url
-            )
-        }
-    }
-
-private fun String.withHttpsPrefix(): String =
-    trim().let { value ->
-        if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("content://")) {
-            value
-        } else {
-            "https://$value"
-        }
-    }
-
-private fun PersonalDocumentationItemType.defaultDocumentationTitle(): String = when (this) {
-    PersonalDocumentationItemType.Photo -> "Zdjecie"
-    PersonalDocumentationItemType.Video -> "Film"
-    PersonalDocumentationItemType.Document -> "Dokument"
-    PersonalDocumentationItemType.File -> "Plik"
-    PersonalDocumentationItemType.Link -> "Link"
-    PersonalDocumentationItemType.Text -> "Notatka"
-}
-
 @Composable
 private fun RepairNotesTab(
     repair: RepairProject,
@@ -4485,7 +4441,9 @@ private fun RepairNotesTab(
                 value = noteText,
                 onValueChange = { noteText = it },
                 label = "Twoje notatki",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("repair_notes_input"),
                 placeholder = "Wpisz uwagi z naprawy, objawy, numery czesci albo rzeczy do sprawdzenia...",
                 singleLine = false,
                 minLines = 8
@@ -4495,15 +4453,9 @@ private fun RepairNotesTab(
                 horizontalArrangement = Arrangement.End
             ) {
                 TextButton(
+                    modifier = Modifier.testTag("repair_notes_save_button"),
                     onClick = {
-                        val baseDocumentation = documentation ?: RepairDocumentation(
-                            title = "Dokumentacja: ${repair.title}",
-                            area = repair.area,
-                            repairTitle = repair.title,
-                            repairId = repair.id,
-                            summary = "Dokumentacja powiazana z naprawa: ${repair.title}."
-                        )
-                        onDocumentationUpdated(baseDocumentation.copy(userNotes = noteText.trim()))
+                        onDocumentationUpdated(documentation.withUserNotes(repair, noteText))
                     }
                 ) {
                     Text("Zapisz notatki")
@@ -4512,37 +4464,6 @@ private fun RepairNotesTab(
         }
     }
 }
-
-private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
-    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
-
-private fun PartInventoryItem.belongsToRepair(repair: RepairProject): Boolean =
-    repairId == repair.id || (repairId.isNullOrBlank() && repairTitle == repair.title)
-
-private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
-    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
-
-private fun String.hasSameRepairTitleAs(other: String): Boolean =
-    normalizedRepairTitleKey() == other.normalizedRepairTitleKey() &&
-        normalizedRepairTitleKey().isNotBlank()
-
-private fun String.normalizedRepairTitleKey(): String =
-    lowercase()
-        .replace(Regex("\\s+"), " ")
-        .trim()
-
-private fun List<ShoppingListItem>.afterReceiving(
-    receivedItem: ShoppingListItem,
-    receivedQuantity: Int,
-): List<ShoppingListItem> =
-    mapNotNull { item ->
-        if (item.stableId() != receivedItem.stableId()) {
-            item
-        } else {
-            val remainingQuantity = item.quantity - receivedQuantity
-            if (remainingQuantity > 0) item.copy(quantity = remainingQuantity) else null
-        }
-    }
 
 private fun nextInventoryId(parts: List<PartInventoryItem>): String =
     "repair-part-${System.currentTimeMillis()}-${parts.size}"
@@ -4554,23 +4475,6 @@ private fun PartInventoryItem.matchesShoppingItem(item: ShoppingListItem): Boole
         shoppingNumbers.any { shoppingNumber -> inventoryNumber == shoppingNumber }
     } || name.equals(item.name, ignoreCase = true)
 }
-
-private fun RepairProject.effectiveCheckpoints(): List<RepairCheckpoint> =
-    checkpoints.ifEmpty {
-        checklist.mapIndexed { index, text ->
-            RepairCheckpoint(
-                id = "checkpoint-${index + 1}",
-                text = text,
-                isDone = false
-            )
-        }
-    }
-
-private fun RepairProject.withCheckpoints(updatedCheckpoints: List<RepairCheckpoint>): RepairProject =
-    copy(
-        checkpoints = updatedCheckpoints,
-        checklist = updatedCheckpoints.map { it.text }
-    )
 
 private fun VehicleArea.accentColor(): androidx.compose.ui.graphics.Color = when (this) {
     VehicleArea.Engine -> AccentYellow
@@ -5626,13 +5530,6 @@ private fun fetchText(url: String): String {
     }
     return stream.bufferedReader().use { it.readText() }
 }
-
-private fun absoluteCzescidobmwUrl(href: String): String =
-    when {
-        href.startsWith("http://") || href.startsWith("https://") -> href
-        href.startsWith("/") -> "https://czescidobmw.pl$href"
-        else -> "https://czescidobmw.pl/$href"
-    }.replace("&amp;", "&")
 
 private fun String.catalogKey(): String =
     lowercase()

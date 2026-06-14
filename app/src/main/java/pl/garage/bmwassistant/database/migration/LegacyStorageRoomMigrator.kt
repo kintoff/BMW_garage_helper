@@ -188,13 +188,13 @@ class LegacyStorageRoomMigrator(
                     sortOrder = archivedIndex
                 )
             }
-            val tisLinks = effectiveTisLinks(item).mapIndexed { linkIndex, link ->
+            val tisLinks = migrationEffectiveTisLinks(item).mapIndexed { linkIndex, link ->
                 link.toEntity(
                     documentationId = documentationId,
                     sortOrder = linkIndex
                 )
             }
-            val youtubeVideos = effectiveYoutubeVideos(item).mapIndexed { videoIndex, video ->
+            val youtubeVideos = migrationEffectiveYoutubeVideos(item).mapIndexed { videoIndex, video ->
                 video.toEntity(
                     documentationId = documentationId,
                     sortOrder = videoIndex
@@ -209,7 +209,7 @@ class LegacyStorageRoomMigrator(
                 )
             }
 
-            val torqueTableBundle = effectiveTorqueTables(item).flatMapIndexed { tableIndex, table ->
+            val torqueTableBundle = migrationEffectiveTorqueTables(item).flatMapIndexed { tableIndex, table ->
                 val tableId = table.id.ifBlank { "${documentationId}_table_$tableIndex" }
                 val tableEntity = table.copy(id = tableId).toEntity(
                     documentationId = documentationId,
@@ -249,47 +249,6 @@ class LegacyStorageRoomMigrator(
         }
     }
 
-    private fun effectiveTisLinks(item: RepairDocumentation): List<TisDocumentationLink> =
-        item.tisDocuments.ifEmpty {
-            item.tisLinks.mapIndexed { index, url ->
-                TisDocumentationLink(
-                    title = "TIS ${index + 1}",
-                    url = url
-                )
-            }
-        }
-
-    private fun effectiveYoutubeVideos(item: RepairDocumentation): List<YoutubeVideo> =
-        item.youtubeVideos.ifEmpty {
-            item.youtubeLinks.mapIndexed { index, url ->
-                YoutubeVideo(
-                    title = "Film YouTube ${index + 1}",
-                    url = url
-                )
-            }
-        }
-
-    private fun effectiveTorqueTables(item: RepairDocumentation): List<TorqueSpecTable> =
-        item.torqueTables.ifEmpty {
-            if (
-                item.torqueSpecs.isEmpty() &&
-                item.torqueDiagramImageUri == null &&
-                item.torqueDiagramAssignments.isEmpty()
-            ) {
-                emptyList()
-            } else {
-                listOf(
-                    TorqueSpecTable(
-                        id = "${item.repairId}_table_0",
-                        title = "Tabela momentow 1",
-                        torqueSpecs = item.torqueSpecs,
-                        diagramImageUri = item.torqueDiagramImageUri,
-                        diagramAssignments = item.torqueDiagramAssignments
-                    )
-                )
-            }
-        }
-
     private companion object {
         const val MIGRATION_PREFS_NAME = "garage_database_migration"
         const val KEY_LEGACY_TO_ROOM_COMPLETE = "legacy_to_room_complete"
@@ -307,3 +266,44 @@ private data class TorqueTableBundle(
     val specEntities: List<TorqueSpecEntity>,
     val assignmentEntities: List<TorqueDiagramAssignmentEntity>,
 )
+
+internal fun migrationEffectiveTisLinks(item: RepairDocumentation): List<TisDocumentationLink> =
+    item.tisDocuments.ifEmpty {
+        item.tisLinks.mapIndexed { index, url ->
+            TisDocumentationLink(
+                title = "TIS ${index + 1}",
+                url = url
+            )
+        }
+    }
+
+internal fun migrationEffectiveYoutubeVideos(item: RepairDocumentation): List<YoutubeVideo> =
+    item.youtubeVideos.ifEmpty {
+        item.youtubeLinks.mapIndexed { index, url ->
+            YoutubeVideo(
+                title = "Film YouTube ${index + 1}",
+                url = url
+            )
+        }
+    }
+
+internal fun migrationEffectiveTorqueTables(item: RepairDocumentation): List<TorqueSpecTable> =
+    item.torqueTables.ifEmpty {
+        if (
+            item.torqueSpecs.isEmpty() &&
+            item.torqueDiagramImageUri == null &&
+            item.torqueDiagramAssignments.isEmpty()
+        ) {
+            emptyList()
+        } else {
+            listOf(
+                TorqueSpecTable(
+                    id = "${item.repairId}_table_0",
+                    title = "Tabela momentow 1",
+                    torqueSpecs = item.torqueSpecs,
+                    diagramImageUri = item.torqueDiagramImageUri,
+                    diagramAssignments = item.torqueDiagramAssignments
+                )
+            )
+        }
+    }

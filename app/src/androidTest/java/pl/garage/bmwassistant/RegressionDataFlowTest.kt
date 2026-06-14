@@ -133,6 +133,41 @@ class RegressionDataFlowTest {
         assertEquals(0, secondResult.migratedVehicles)
     }
 
+    @Test
+    fun repairArchiveExportAndImportPreservesDocumentationAndArchivedShopping() = runBlocking {
+        val vehicle = repository.saveVehicle(
+            sampleVehicle(
+                id = "vehicle_archive_regression",
+                vin = "WBAARCHIVE001"
+            )
+        )
+        val snapshot = sampleSnapshot(vehicle)
+        val repair = snapshot.repairs.first()
+        val documentation = snapshot.documentation.first()
+        val shoppingItems = snapshot.shoppingList
+
+        val rawArchive = repository.createRepairArchiveExport(
+            vehicle = vehicle,
+            repair = repair,
+            documentation = documentation,
+            shoppingItems = shoppingItems
+        )
+
+        val imported = repository.importRepairArchive(
+            vehicle = vehicle,
+            rawArchive = rawArchive,
+            importAsArchived = true
+        )
+
+        assertNotNull(imported)
+        assertEquals(repair.title, imported?.repair?.title)
+        assertEquals(REPAIR_STATUS_FINISHED, imported?.repair?.status)
+        assertTrue(imported?.shoppingList?.isEmpty() == true)
+        assertEquals(shoppingItems.map { it.name }, imported?.documentation?.archivedShoppingList?.map { it.name })
+        assertEquals(documentation.tisDocuments.map { it.url }, imported?.documentation?.tisDocuments?.map { it.url })
+        assertEquals(documentation.youtubeVideos.map { it.url }, imported?.documentation?.youtubeVideos?.map { it.url })
+    }
+
     private fun assertSnapshotEquals(
         expected: VehicleDataSnapshot,
         actual: VehicleDataSnapshot,

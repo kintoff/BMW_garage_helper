@@ -13,7 +13,7 @@ class PartInventoryStorage(context: Context) {
     private val preferences = context.getSharedPreferences("garage_parts_data", Context.MODE_PRIVATE)
 
     fun loadParts(vehicle: Vehicle): List<PartInventoryItem> {
-        val rawParts = preferences.getString(vehicle.storageKey(), null) ?: return emptyList()
+        val rawParts = preferences.getString(vehicle.partsStorageKey(), null) ?: return emptyList()
         return runCatching {
             val array = JSONArray(rawParts)
             List(array.length()) { index ->
@@ -23,7 +23,7 @@ class PartInventoryStorage(context: Context) {
     }
 
     fun hasParts(vehicle: Vehicle): Boolean =
-        preferences.contains(vehicle.storageKey())
+        preferences.contains(vehicle.partsStorageKey())
 
     fun saveParts(
         vehicle: Vehicle,
@@ -34,7 +34,7 @@ class PartInventoryStorage(context: Context) {
             array.put(part.toJson())
         }
         preferences.edit()
-            .putString(vehicle.storageKey(), array.toString())
+            .putString(vehicle.partsStorageKey(), array.toString())
             .apply()
     }
 
@@ -66,8 +66,8 @@ class PartInventoryStorage(context: Context) {
 
     fun ensureVehicleData(vehicle: Vehicle) {
         preferences.edit().apply {
-            if (!preferences.contains(vehicle.storageKey())) {
-                putString(vehicle.storageKey(), JSONArray().toString())
+            if (!preferences.contains(vehicle.partsStorageKey())) {
+                putString(vehicle.partsStorageKey(), JSONArray().toString())
             }
             if (!preferences.contains(vehicle.shoppingStorageKey())) {
                 putString(vehicle.shoppingStorageKey(), JSONArray().toString())
@@ -76,17 +76,17 @@ class PartInventoryStorage(context: Context) {
     }
 }
 
-private fun Vehicle.storageKey(): String {
+internal fun Vehicle.partsStorageKey(): String {
     val stableId = id.ifBlank { vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } } }
     return "parts_$stableId"
 }
 
-private fun Vehicle.shoppingStorageKey(): String {
+internal fun Vehicle.shoppingStorageKey(): String {
     val stableId = id.ifBlank { vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } } }
     return "shopping_$stableId"
 }
 
-private fun PartInventoryItem.toJson(): JSONObject = JSONObject()
+internal fun PartInventoryItem.toJson(): JSONObject = JSONObject()
     .put("id", id)
     .put("oemPartNumber", oemPartNumber)
     .put("manufacturerPartNumber", manufacturerPartNumber)
@@ -99,7 +99,7 @@ private fun PartInventoryItem.toJson(): JSONObject = JSONObject()
     .put("realOemUrl", realOemUrl)
     .put("photoUri", photoUri)
 
-private fun JSONObject.toPartInventoryItem(vehicle: Vehicle): PartInventoryItem = PartInventoryItem(
+internal fun JSONObject.toPartInventoryItem(vehicle: Vehicle): PartInventoryItem = PartInventoryItem(
     id = optString("id"),
     oemPartNumber = optString("oemPartNumber"),
     manufacturerPartNumber = optString("manufacturerPartNumber"),
@@ -121,7 +121,7 @@ private fun JSONObject.toPartInventoryItem(vehicle: Vehicle): PartInventoryItem 
     }
 )
 
-private fun ShoppingListItem.toJson(): JSONObject = JSONObject()
+internal fun ShoppingListItem.toJson(): JSONObject = JSONObject()
     .put("id", id)
     .put("partNumber", partNumber)
     .put("manufacturerPartNumber", manufacturerPartNumber)
@@ -137,7 +137,7 @@ private fun ShoppingListItem.toJson(): JSONObject = JSONObject()
     .put("shopUrl", shopUrl)
     .put("realOemUrl", realOemUrl)
 
-private fun JSONObject.toShoppingListItem(vehicle: Vehicle): ShoppingListItem {
+internal fun JSONObject.toShoppingListItem(vehicle: Vehicle): ShoppingListItem {
     val area = optString("area")
         .let { rawArea -> VehicleArea.entries.firstOrNull { it.name == rawArea } }
         ?: VehicleArea.Service

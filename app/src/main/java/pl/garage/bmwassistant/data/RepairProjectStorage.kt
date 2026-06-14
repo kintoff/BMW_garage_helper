@@ -2,7 +2,6 @@ package pl.garage.bmwassistant.data
 
 import android.content.Context
 import android.net.Uri
-import android.util.Base64
 import pl.garage.bmwassistant.model.PersonalDocumentationItem
 import pl.garage.bmwassistant.model.PersonalDocumentationItemType
 import pl.garage.bmwassistant.model.RepairCheckpoint
@@ -25,6 +24,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.Base64
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -169,7 +169,7 @@ class RepairProjectStorage(private val context: Context) {
                 val asset = assets[assetId] ?: return rawUri
                 val bytes = archive.assetBytes[asset.path]
                     ?: archive.assetBytes[assetId]
-                    ?: asset.data?.let { Base64.decode(it, Base64.DEFAULT) }
+                    ?: asset.data?.let { Base64.getDecoder().decode(it) }
                     ?: return rawUri
                 val directory = File(context.filesDir, "imported_repair_archives/$newRepairId")
                 directory.mkdirs()
@@ -227,25 +227,25 @@ data class ImportedRepairArchive(
     val shoppingList: List<ShoppingListItem>,
 )
 
-private data class ExportedAsset(
+internal data class ExportedAsset(
     val fileName: String,
     val path: String,
     val data: String? = null,
 )
 
-private data class ArchiveAsset(
+internal data class ArchiveAsset(
     val id: String,
     val fileName: String,
     val path: String,
     val bytes: ByteArray,
 )
 
-private data class RepairArchivePayload(
+internal data class RepairArchivePayload(
     val manifest: JSONObject,
     val assetBytes: Map<String, ByteArray>,
 )
 
-private fun repairsToJson(repairs: List<RepairProject>): JSONArray =
+internal fun repairsToJson(repairs: List<RepairProject>): JSONArray =
     JSONArray().apply {
         repairs.forEach { repair ->
             put(
@@ -266,7 +266,7 @@ private fun repairsToJson(repairs: List<RepairProject>): JSONArray =
         }
     }
 
-private fun repairsFromJson(rawJson: String): List<RepairProject> =
+internal fun repairsFromJson(rawJson: String): List<RepairProject> =
     runCatching {
         val array = JSONArray(rawJson)
         buildList {
@@ -309,7 +309,7 @@ private fun repairsFromJson(rawJson: String): List<RepairProject> =
         }
     }.getOrDefault(emptyList())
 
-private fun checkpointsToJson(checkpoints: List<RepairCheckpoint>): JSONArray =
+internal fun checkpointsToJson(checkpoints: List<RepairCheckpoint>): JSONArray =
     JSONArray().apply {
         checkpoints.forEach { checkpoint ->
             put(
@@ -321,7 +321,7 @@ private fun checkpointsToJson(checkpoints: List<RepairCheckpoint>): JSONArray =
         }
     }
 
-private fun JSONArray?.toRepairCheckpoints(): List<RepairCheckpoint> {
+internal fun JSONArray?.toRepairCheckpoints(): List<RepairCheckpoint> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -339,7 +339,7 @@ private fun JSONArray?.toRepairCheckpoints(): List<RepairCheckpoint> {
     }
 }
 
-private fun documentationToJson(documentation: List<RepairDocumentation>): JSONArray =
+internal fun documentationToJson(documentation: List<RepairDocumentation>): JSONArray =
     JSONArray().apply {
         documentation.forEach { item ->
             put(
@@ -364,7 +364,7 @@ private fun documentationToJson(documentation: List<RepairDocumentation>): JSONA
         }
     }
 
-private fun documentationFromJson(
+internal fun documentationFromJson(
     rawJson: String,
     repairs: List<RepairProject>,
 ): List<RepairDocumentation> =
@@ -410,7 +410,7 @@ private fun documentationFromJson(
         }
     }.getOrDefault(emptyList())
 
-private fun shoppingListToJson(items: List<ShoppingListItem>): JSONArray =
+internal fun shoppingListToJson(items: List<ShoppingListItem>): JSONArray =
     JSONArray().apply {
         items.forEach { item ->
             put(
@@ -433,7 +433,7 @@ private fun shoppingListToJson(items: List<ShoppingListItem>): JSONArray =
         }
     }
 
-private fun JSONArray?.toShoppingList(): List<ShoppingListItem> {
+internal fun JSONArray?.toShoppingList(): List<ShoppingListItem> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -461,7 +461,7 @@ private fun JSONArray?.toShoppingList(): List<ShoppingListItem> {
     }
 }
 
-private fun torqueSpecsToJson(torqueSpecs: List<TorqueSpec>): JSONArray =
+internal fun torqueSpecsToJson(torqueSpecs: List<TorqueSpec>): JSONArray =
     JSONArray().apply {
         torqueSpecs.forEach { spec ->
             put(
@@ -477,7 +477,7 @@ private fun torqueSpecsToJson(torqueSpecs: List<TorqueSpec>): JSONArray =
         }
     }
 
-private fun JSONArray?.toTorqueSpecs(): List<TorqueSpec> {
+internal fun JSONArray?.toTorqueSpecs(): List<TorqueSpec> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -497,7 +497,7 @@ private fun JSONArray?.toTorqueSpecs(): List<TorqueSpec> {
     }
 }
 
-private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
+internal fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
     torqueTables.ifEmpty {
         if (
             torqueSpecs.isEmpty() &&
@@ -518,7 +518,7 @@ private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
         }
     }
 
-private fun RepairDocumentation.effectiveTisDocuments(): List<TisDocumentationLink> =
+internal fun RepairDocumentation.effectiveTisDocuments(): List<TisDocumentationLink> =
     tisDocuments.ifEmpty {
         tisLinks.mapIndexed { index, link ->
             TisDocumentationLink(
@@ -528,7 +528,7 @@ private fun RepairDocumentation.effectiveTisDocuments(): List<TisDocumentationLi
         }
     }
 
-private fun RepairDocumentation.effectiveYoutubeVideos(): List<YoutubeVideo> =
+internal fun RepairDocumentation.effectiveYoutubeVideos(): List<YoutubeVideo> =
     youtubeVideos.ifEmpty {
         youtubeLinks.mapIndexed { index, link ->
             YoutubeVideo(
@@ -538,7 +538,7 @@ private fun RepairDocumentation.effectiveYoutubeVideos(): List<YoutubeVideo> =
         }
     }
 
-private fun tisDocumentsToJson(links: List<TisDocumentationLink>): JSONArray =
+internal fun tisDocumentsToJson(links: List<TisDocumentationLink>): JSONArray =
     JSONArray().apply {
         links.forEach { link ->
             put(
@@ -549,7 +549,7 @@ private fun tisDocumentsToJson(links: List<TisDocumentationLink>): JSONArray =
         }
     }
 
-private fun JSONArray?.toTisDocuments(): List<TisDocumentationLink> {
+internal fun JSONArray?.toTisDocuments(): List<TisDocumentationLink> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -566,7 +566,7 @@ private fun JSONArray?.toTisDocuments(): List<TisDocumentationLink> {
     }
 }
 
-private fun youtubeVideosToJson(videos: List<YoutubeVideo>): JSONArray =
+internal fun youtubeVideosToJson(videos: List<YoutubeVideo>): JSONArray =
     JSONArray().apply {
         videos.forEach { video ->
             put(
@@ -578,7 +578,7 @@ private fun youtubeVideosToJson(videos: List<YoutubeVideo>): JSONArray =
         }
     }
 
-private fun JSONArray?.toYoutubeVideos(): List<YoutubeVideo> {
+internal fun JSONArray?.toYoutubeVideos(): List<YoutubeVideo> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -594,7 +594,7 @@ private fun JSONArray?.toYoutubeVideos(): List<YoutubeVideo> {
     }.filter { it.url.isNotBlank() }
 }
 
-private fun personalNotesToJson(items: List<PersonalDocumentationItem>): JSONArray =
+internal fun personalNotesToJson(items: List<PersonalDocumentationItem>): JSONArray =
     JSONArray().apply {
         items.forEach { item ->
             put(
@@ -609,7 +609,7 @@ private fun personalNotesToJson(items: List<PersonalDocumentationItem>): JSONArr
         }
     }
 
-private fun JSONArray?.toPersonalNotes(): List<PersonalDocumentationItem> {
+internal fun JSONArray?.toPersonalNotes(): List<PersonalDocumentationItem> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -630,7 +630,7 @@ private fun JSONArray?.toPersonalNotes(): List<PersonalDocumentationItem> {
     }
 }
 
-private fun torqueTablesToJson(tables: List<TorqueSpecTable>): JSONArray =
+internal fun torqueTablesToJson(tables: List<TorqueSpecTable>): JSONArray =
     JSONArray().apply {
         tables.forEach { table ->
             put(
@@ -644,7 +644,7 @@ private fun torqueTablesToJson(tables: List<TorqueSpecTable>): JSONArray =
         }
     }
 
-private fun JSONArray?.toTorqueTables(): List<TorqueSpecTable> {
+internal fun JSONArray?.toTorqueTables(): List<TorqueSpecTable> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -662,7 +662,7 @@ private fun JSONArray?.toTorqueTables(): List<TorqueSpecTable> {
     }
 }
 
-private fun torqueDiagramAssignmentsToJson(assignments: List<TorqueDiagramAssignment>): JSONArray =
+internal fun torqueDiagramAssignmentsToJson(assignments: List<TorqueDiagramAssignment>): JSONArray =
     JSONArray().apply {
         assignments.forEach { assignment ->
             put(
@@ -674,7 +674,7 @@ private fun torqueDiagramAssignmentsToJson(assignments: List<TorqueDiagramAssign
         }
     }
 
-private fun JSONArray?.toTorqueDiagramAssignments(): List<TorqueDiagramAssignment> {
+internal fun JSONArray?.toTorqueDiagramAssignments(): List<TorqueDiagramAssignment> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -690,7 +690,7 @@ private fun JSONArray?.toTorqueDiagramAssignments(): List<TorqueDiagramAssignmen
     }
 }
 
-private fun JSONArray?.toAssetMap(): Map<String, ExportedAsset> {
+internal fun JSONArray?.toAssetMap(): Map<String, ExportedAsset> {
     if (this == null) return emptyMap()
     return buildMap {
         for (index in 0 until length()) {
@@ -709,10 +709,10 @@ private fun JSONArray?.toAssetMap(): Map<String, ExportedAsset> {
     }
 }
 
-private fun readRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
+internal fun readRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
     readZippedRepairArchive(rawArchive) ?: readLegacyJsonRepairArchive(rawArchive)
 
-private fun readZippedRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
+internal fun readZippedRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
     runCatching {
         var manifest: JSONObject? = null
         val assetBytes = mutableMapOf<String, ByteArray>()
@@ -730,7 +730,7 @@ private fun readZippedRepairArchive(rawArchive: ByteArray): RepairArchivePayload
         manifest?.let { RepairArchivePayload(it, assetBytes) }
     }.getOrNull()
 
-private fun readLegacyJsonRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
+internal fun readLegacyJsonRepairArchive(rawArchive: ByteArray): RepairArchivePayload? =
     runCatching {
         val manifest = JSONObject(rawArchive.toString(Charsets.UTF_8))
         if (manifest.optString("format") != "BMW_GARAGE_REPAIR_ARCHIVE") return@runCatching null
@@ -742,7 +742,7 @@ private fun readLegacyJsonRepairArchive(rawArchive: ByteArray): RepairArchivePay
                     val id = item.optString("id")
                     val data = item.optString("data")
                     if (id.isNotBlank() && data.isNotBlank()) {
-                        put(id, Base64.decode(data, Base64.DEFAULT))
+                        put(id, Base64.getDecoder().decode(data))
                     }
                 }
             }
@@ -750,7 +750,7 @@ private fun readLegacyJsonRepairArchive(rawArchive: ByteArray): RepairArchivePay
         RepairArchivePayload(manifest, assetBytes)
     }.getOrNull()
 
-private fun RepairDocumentation.withMappedUris(
+internal fun RepairDocumentation.withMappedUris(
     mapper: (String?) -> String?,
 ): RepairDocumentation =
     copy(
@@ -764,12 +764,12 @@ private fun RepairDocumentation.withMappedUris(
         }
     )
 
-private fun ShoppingListItem.withMappedUris(
+internal fun ShoppingListItem.withMappedUris(
     mapper: (String?) -> String?,
 ): ShoppingListItem =
     copy(imageUri = mapper(imageUri))
 
-private fun ShoppingListItem.archiveImportKey(): String =
+internal fun ShoppingListItem.archiveImportKey(): String =
     listOf(
         id,
         repairId,
@@ -785,7 +785,7 @@ private fun ShoppingListItem.archiveImportKey(): String =
         realOemUrl.orEmpty()
     ).joinToString("|")
 
-private fun JSONArray?.toStringList(): List<String> {
+internal fun JSONArray?.toStringList(): List<String> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
@@ -794,7 +794,7 @@ private fun JSONArray?.toStringList(): List<String> {
     }
 }
 
-private fun Vehicle.storageKey(): String {
+internal fun Vehicle.storageKey(): String {
     val stableId = id.ifBlank { vin.ifBlank { displayName.ifBlank { "unknown_vehicle" } } }
     return stableId
 }

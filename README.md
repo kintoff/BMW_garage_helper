@@ -120,7 +120,14 @@ Albo osobno:
 
 ```bash
 ./scripts/run-unit-tests.sh
+./scripts/run-unit-tests.sh --coverage
 ./scripts/run-device-tests.sh
+```
+
+Raport pokrycia po `--coverage` znajdziesz w:
+
+```bash
+app/build/reports/jacoco/jacocoDebugUnitTestReport/html/index.html
 ```
 
 Skrypt testow na telefonie wymaga:

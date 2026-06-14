@@ -23,7 +23,7 @@ class AppUpdateManager(
     private val repoName = BuildConfig.UPDATE_REPO_NAME.trim()
 
     fun isConfigured(): Boolean =
-        repoOwner.isNotBlank() && repoName.isNotBlank()
+        isUpdateConfigurationValid(repoOwner, repoName)
 
     fun checkForUpdate(): AppUpdateCheckResult {
         if (!isConfigured()) return AppUpdateCheckResult.NotConfigured
@@ -66,31 +66,13 @@ class AppUpdateManager(
                     )
                 }
 
-                val digest = MessageDigest.getInstance("SHA-256")
                 http.inputStream.use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read <= 0) break
-                            digest.update(buffer, 0, read)
-                            output.write(buffer, 0, read)
-                        }
-                    }
-                }
-
-                val downloadedDigest = digest.digest().toHexString()
-                if (release.sha256Digest != null && !release.sha256Digest.equals(downloadedDigest, ignoreCase = true)) {
-                    targetFile.delete()
-                    return DownloadUpdateResult.Error(
-                        "Suma kontrolna APK nie zgadza sie z release na GitHub."
+                    writeVerifiedApk(
+                        input = input,
+                        targetFile = targetFile,
+                        expectedSha256Digest = release.sha256Digest
                     )
                 }
-
-                DownloadUpdateResult.Success(
-                    file = targetFile,
-                    downloadedDigest = downloadedDigest
-                )
             }
         }.getOrElse {
             DownloadUpdateResult.Error(
@@ -150,41 +132,6 @@ class AppUpdateManager(
             true
         }.getOrDefault(false)
 
-    private fun parseRelease(root: JSONObject): AppUpdateRelease? {
-        val tagVersionName = root.optString("tag_name").removePrefix("v").trim()
-        val releaseVersionName = tagVersionName.ifBlank {
-            root.optString("name").removePrefix("v").trim()
-        }
-        if (releaseVersionName.isBlank()) return null
-
-        val asset = root.optJSONArray("assets")
-            ?.let { assets ->
-                (0 until assets.length())
-                    .mapNotNull(assets::optJSONObject)
-                    .firstOrNull { item ->
-                        item.optString("name").endsWith(".apk", ignoreCase = true)
-                    }
-            }
-            ?: return null
-
-        val assetName = asset.optString("name")
-        val downloadUrl = asset.optString("browser_download_url")
-        if (assetName.isBlank() || downloadUrl.isBlank()) return null
-
-        return AppUpdateRelease(
-            versionName = releaseVersionName,
-            downloadUrl = downloadUrl,
-            assetFileName = assetName,
-            publishedAt = root.optString("published_at"),
-            notes = root.optString("body"),
-            sha256Digest = asset.optString("digest")
-                .removePrefix("sha256:")
-                .trim()
-                .takeIf(String::isNotBlank),
-            isPrerelease = root.optBoolean("prerelease", false)
-        )
-    }
-
     private fun fetchNewestRelease(): AppUpdateRelease? {
         val latestResponse = request(latestReleaseUrl())
         if (latestResponse.code in 200..299) {
@@ -233,16 +180,7 @@ class AppUpdateManager(
     }
 
     private fun AppUpdateRelease.isNewerThanCurrent(): Boolean {
-        val latestParts = versionParts(versionName)
-        val currentParts = versionParts(BuildConfig.VERSION_NAME)
-        val size = max(latestParts.size, currentParts.size)
-        for (index in 0 until size) {
-            val latest = latestParts.getOrElse(index) { 0 }
-            val current = currentParts.getOrElse(index) { 0 }
-            if (latest > current) return true
-            if (latest < current) return false
-        }
-        return false
+        return isNewerVersion(versionName, BuildConfig.VERSION_NAME)
     }
 
     private fun latestReleaseUrl(): String =
@@ -283,10 +221,96 @@ private fun versionParts(versionName: String): List<Int> =
         .split('.', '-', '_')
         .mapNotNull { part -> part.toIntOrNull() }
 
-private fun ByteArray.toHexString(): String =
+internal fun isUpdateConfigurationValid(
+    repoOwner: String,
+    repoName: String,
+): Boolean = repoOwner.isNotBlank() && repoName.isNotBlank()
+
+internal fun parseRelease(root: JSONObject): AppUpdateRelease? {
+    val tagVersionName = root.optString("tag_name").removePrefix("v").trim()
+    val releaseVersionName = tagVersionName.ifBlank {
+        root.optString("name").removePrefix("v").trim()
+    }
+    if (releaseVersionName.isBlank()) return null
+
+    val asset = root.optJSONArray("assets")
+        ?.let { assets ->
+            (0 until assets.length())
+                .mapNotNull(assets::optJSONObject)
+                .firstOrNull { item ->
+                    item.optString("name").endsWith(".apk", ignoreCase = true)
+                }
+        }
+        ?: return null
+
+    val assetName = asset.optString("name")
+    val downloadUrl = asset.optString("browser_download_url")
+    if (assetName.isBlank() || downloadUrl.isBlank()) return null
+
+    return AppUpdateRelease(
+        versionName = releaseVersionName,
+        downloadUrl = downloadUrl,
+        assetFileName = assetName,
+        publishedAt = root.optString("published_at"),
+        notes = root.optString("body"),
+        sha256Digest = asset.optString("digest")
+            .removePrefix("sha256:")
+            .trim()
+            .takeIf(String::isNotBlank),
+        isPrerelease = root.optBoolean("prerelease", false)
+    )
+}
+
+internal fun isNewerVersion(
+    latestVersion: String,
+    currentVersion: String,
+): Boolean {
+    val latestParts = versionParts(latestVersion)
+    val currentParts = versionParts(currentVersion)
+    val size = max(latestParts.size, currentParts.size)
+    for (index in 0 until size) {
+        val latest = latestParts.getOrElse(index) { 0 }
+        val current = currentParts.getOrElse(index) { 0 }
+        if (latest > current) return true
+        if (latest < current) return false
+    }
+    return false
+}
+
+internal fun writeVerifiedApk(
+    input: java.io.InputStream,
+    targetFile: File,
+    expectedSha256Digest: String?,
+): DownloadUpdateResult {
+    val digest = MessageDigest.getInstance("SHA-256")
+    FileOutputStream(targetFile).use { output ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+            output.write(buffer, 0, read)
+        }
+    }
+
+    val downloadedDigest = digest.digest().toHexString()
+    if (expectedSha256Digest != null && !expectedSha256Digest.equals(downloadedDigest, ignoreCase = true)) {
+        targetFile.delete()
+        return DownloadUpdateResult.Error(
+            "Suma kontrolna APK nie zgadza sie z release na GitHub."
+        )
+    }
+
+    return DownloadUpdateResult.Success(
+        file = targetFile,
+        downloadedDigest = downloadedDigest
+    )
+}
+
+internal fun ByteArray.toHexString(): String =
     joinToString(separator = "") { byte -> "%02x".format(byte) }
 
-private data class HttpResponse(
+internal data class HttpResponse(
     val code: Int,
     val body: String,
 )
