@@ -98,6 +98,24 @@ Zakres workflow w GitHub:
 
 - `:app:testDebugUnitTest` dla szybkich testow logiki.
 
+Aktualna strategia testow:
+
+- nowy feature powinien dostawac nowy test,
+- logika biznesowa i parsery trafiaja najpierw do szybkiej warstwy `JVM`,
+- `androidTest` zostaje dla realnych przeplywow UI, Room oraz import/export zaleznych od Androida,
+- procent pokrycia jest wskaznikiem pomocniczym, ale priorytetem jest ochrona krytycznych danych i scenariuszy uzytkownika.
+
+Najwazniejsze obszary pokryte testami:
+
+- reguly napraw, checkpointow, notatek i archiwizacji,
+- dokumentacja napraw, linki TIS, YouTube i `personalNotes`,
+- `torqueTables` oraz import/export dokumentacji,
+- shopping list, magazyn i przyjmowanie czesci,
+- parsery `Allegro` i `czescidobmw.pl`,
+- zgodnosc wsteczna danych i migracje legacy -> Room,
+- logika sprawdzania aktualizacji APK,
+- podstawowe przeplywy UI Compose na urzadzeniu.
+
 Pelne testy regresyjne odpalamy lokalnie na podlaczonym telefonie. To jest celowy wybor:
 
 - mniej problemow z emulatorami w CI,
