@@ -94,6 +94,19 @@ class LegacyStorageCompatibilityTest {
         assertEquals("shopping_WBATEST001", vehicle.shoppingStorageKey())
     }
 
+    @Test
+    fun stableVehicleIdFallsBackToVinDisplayNameOrUnknownVehicle() {
+        assertEquals("WBATEST001", sampleVehicle().stableVehicleId())
+        assertEquals(
+            "BMW E61 520d E61",
+            sampleVehicle().copy(id = "", vin = "").stableVehicleId()
+        )
+        assertEquals(
+            "unknown_vehicle",
+            legacyVehicleId(vin = "", brand = "", model = "", generation = "")
+        )
+    }
+
     private fun sampleVehicle() = Vehicle(
         brand = "BMW",
         model = "E61 520d",

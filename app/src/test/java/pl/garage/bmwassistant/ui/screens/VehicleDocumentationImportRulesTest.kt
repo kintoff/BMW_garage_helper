@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import pl.garage.bmwassistant.model.PersonalDocumentationItemType
 import pl.garage.bmwassistant.model.RepairDocumentation
@@ -100,6 +101,68 @@ class VehicleDocumentationImportRulesTest {
 
         assertEquals("table-1", tables.single().id)
         assertEquals("Tabela momentow 1", tables.single().title)
+    }
+
+    @Test
+    fun toImportedDocumentationKeepsCurrentTitleAndSummaryWhenIncomingValuesAreBlank() {
+        val imported = JSONObject()
+            .put("title", "")
+            .put("summary", "")
+
+        val result = imported.toImportedDocumentation(
+            currentDocumentation = documentation(),
+            resolveAsset = { it }
+        )
+
+        assertEquals(documentation().title, result.title)
+        assertEquals(documentation().summary, result.summary)
+    }
+
+    @Test
+    fun toImportedTisDocumentsSkipsBlankUrlsAndBuildsFallbackTitles() {
+        val documents = JSONArray()
+            .put(JSONObject().put("title", "").put("url", "https://tis.example/1"))
+            .put(JSONObject().put("title", "Puste"))
+            .toImportedTisDocuments()
+
+        assertEquals(1, documents.size)
+        assertEquals("TIS 1", documents.single().title)
+    }
+
+    @Test
+    fun toImportedTorqueTablesResolvesAssetsAndFallsBackToDefaults() {
+        val tables = JSONArray().put(
+            JSONObject()
+                .put("diagramImageUri", "package://diagram.png")
+                .put("torqueSpecs", JSONArray().put(JSONObject().put("component", "Sruba")))
+                .put("diagramAssignments", JSONArray().put(JSONObject().put("torqueSpecIndex", 1)))
+        ).toImportedTorqueTables { raw -> raw?.replace("package://", "content://") }
+
+        assertEquals("content://diagram.png", tables.single().diagramImageUri)
+        assertEquals(1, tables.single().diagramAssignments.single().torqueSpecIndex)
+        assertEquals("Sruba", tables.single().torqueSpecs.single().component)
+    }
+
+    @Test
+    fun toImportedPersonalNotesPreservesExplicitIdAndUrl() {
+        val notes = JSONArray().put(
+            JSONObject()
+                .put("id", "note_custom")
+                .put("type", "Link")
+                .put("title", "Forum")
+                .put("url", "https://forum.example")
+        ).toImportedPersonalNotes(resolveAsset = { it })
+
+        assertEquals("note_custom", notes.single().id)
+        assertEquals("https://forum.example", notes.single().url)
+    }
+
+    @Test
+    fun nullJsonArraysImportAsEmptyLists() {
+        assertTrue((null as JSONArray?).toImportedShoppingList().isEmpty())
+        assertTrue((null as JSONArray?).toImportedTisDocuments().isEmpty())
+        assertTrue((null as JSONArray?).toImportedTorqueSpecs().isEmpty())
+        assertTrue((null as JSONArray?).toImportedDiagramAssignments().isEmpty())
     }
 
     @Test

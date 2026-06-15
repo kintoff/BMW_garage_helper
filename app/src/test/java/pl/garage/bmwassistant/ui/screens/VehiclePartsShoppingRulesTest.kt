@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.ShoppingListItem
 import pl.garage.bmwassistant.model.VehicleArea
 
@@ -20,6 +21,27 @@ class VehiclePartsShoppingRulesTest {
     }
 
     @Test
+    fun inventoryPartStableIdFallsBackToRepairAndPartFields() {
+        val item = PartInventoryItem(
+            id = "",
+            oemPartNumber = "33326763092",
+            manufacturerPartNumber = "LEM-123",
+            name = "Tuleja wahacza",
+            manufacturer = "Lemforder",
+            repairTitle = "Tylna zwrotnica lewa",
+            quantity = 1,
+            purchasePrice = "249.99",
+            realOemUrl = null,
+            repairId = "repair_rear_knuckle"
+        )
+
+        assertEquals(
+            "repair_rear_knuckle|Tylna zwrotnica lewa|33326763092|LEM-123|Tuleja wahacza",
+            item.stableId()
+        )
+    }
+
+    @Test
     fun toInventoryPartMapsShoppingItemAndCoercesQuantity() {
         val inventory = shoppingItem(quantity = 0, price = "", manufacturer = "").toInventoryPart(
             nextId = "inventory_1",
@@ -31,6 +53,24 @@ class VehiclePartsShoppingRulesTest {
         assertEquals(1, inventory.quantity)
         assertEquals("do uzupelnienia", inventory.purchasePrice)
         assertEquals("do uzupelnienia", inventory.manufacturer)
+    }
+
+    @Test
+    fun toInventoryPartFallsBackWhenPartNumbersAndRepairIdAreBlank() {
+        val inventory = shoppingItem(
+            id = "",
+            partNumber = "",
+            manufacturerPartNumber = "",
+            manufacturer = "",
+            price = "",
+            repairTitle = "",
+            repairId = ""
+        ).toInventoryPart(nextId = "inventory_2")
+
+        assertEquals("do uzupelnienia", inventory.oemPartNumber)
+        assertEquals("do uzupelnienia", inventory.manufacturerPartNumber)
+        assertNull(inventory.repairTitle)
+        assertNull(inventory.repairId)
     }
 
     @Test
@@ -52,6 +92,17 @@ class VehiclePartsShoppingRulesTest {
             listOf(
                 shoppingItem(area = VehicleArea.Engine),
                 shoppingItem(area = VehicleArea.Suspension)
+            ).areaSummaryLabel()
+        )
+    }
+
+    @Test
+    fun areaSummaryLabelReturnsReadableLabelForSingleArea() {
+        assertEquals(
+            VehicleArea.Engine.label,
+            listOf(
+                shoppingItem(area = VehicleArea.Engine),
+                shoppingItem(id = "shopping_2", area = VehicleArea.Engine)
             ).areaSummaryLabel()
         )
     }
@@ -96,6 +147,19 @@ class VehiclePartsShoppingRulesTest {
         assertTrue(removed.none { it.stableId() == first.stableId() })
     }
 
+    @Test
+    fun afterReceivingLeavesListUntouchedWhenNoStableIdMatches() {
+        val first = shoppingItem(id = "shopping_1", quantity = 3)
+        val second = shoppingItem(id = "shopping_2", partNumber = "11428575211", name = "Filtr oleju")
+
+        val updated = listOf(first, second).afterReceiving(
+            receivedItem = shoppingItem(id = "shopping_3", partNumber = "999", name = "Inna czesc"),
+            receivedQuantity = 1
+        )
+
+        assertEquals(listOf(first, second), updated)
+    }
+
     private fun shoppingItem(
         id: String = "shopping_1",
         area: VehicleArea = VehicleArea.Suspension,
@@ -104,15 +168,17 @@ class VehiclePartsShoppingRulesTest {
         manufacturer: String = "Lemforder",
         partNumber: String = "33326763092",
         manufacturerPartNumber: String = "LEM-123",
-        name: String = "Tuleja wahacza"
+        name: String = "Tuleja wahacza",
+        repairTitle: String = "Tylna zwrotnica lewa",
+        repairId: String = "repair_rear_knuckle"
     ) = ShoppingListItem(
         id = id,
         partNumber = partNumber,
         manufacturerPartNumber = manufacturerPartNumber,
         name = name,
         manufacturer = manufacturer,
-        repairTitle = "Tylna zwrotnica lewa",
-        repairId = "repair_rear_knuckle",
+        repairTitle = repairTitle,
+        repairId = repairId,
         area = area,
         quantity = quantity,
         source = "Autodoc",

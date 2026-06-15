@@ -1,6 +1,7 @@
 package pl.garage.bmwassistant.ui.screens
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import pl.garage.bmwassistant.model.PersonalDocumentationItem
 import pl.garage.bmwassistant.model.PersonalDocumentationItemType
@@ -53,6 +54,20 @@ class VehicleDocumentationRulesTest {
     }
 
     @Test
+    fun withRemovedDocumentationTisLinkRemovesSelectedIndexAndClearsLegacyLinks() {
+        val updated = documentation().copy(
+            tisLinks = listOf("https://legacy"),
+            tisDocuments = listOf(
+                TisDocumentationLink("A", "https://a"),
+                TisDocumentationLink("B", "https://b")
+            )
+        ).withRemovedDocumentationTisLink(1)
+
+        assertEquals(emptyList<String>(), updated.tisLinks)
+        assertEquals(listOf("A"), updated.tisDocuments.map { it.title })
+    }
+
+    @Test
     fun withRemovedDocumentationYoutubeVideoRemovesSelectedIndexAndClearsLegacyLinks() {
         val updated = documentation().copy(
             youtubeLinks = listOf("https://youtube.com/watch?v=abc123"),
@@ -79,6 +94,26 @@ class VehicleDocumentationRulesTest {
 
         assertEquals("Film YouTube abc123xyz89", videos[0].title)
         assertEquals("Film YouTube 2", videos[1].title)
+    }
+
+    @Test
+    fun withAddedAndUpdatedDocumentationYoutubeVideoUseNormalizedList() {
+        val added = documentation().copy(
+            youtubeLinks = listOf("https://youtu.be/abc123xyz89")
+        ).withAddedDocumentationYoutubeVideo(
+            YoutubeVideo("Nowy film", "https://youtube.com/watch?v=qwe123asd45")
+        )
+
+        assertEquals(emptyList<String>(), added.youtubeLinks)
+        assertEquals(2, added.youtubeVideos.size)
+
+        val updated = added.withUpdatedDocumentationYoutubeVideo(
+            index = 0,
+            video = YoutubeVideo("Poprawiony film", "https://youtube.com/watch?v=abc123xyz89")
+        )
+
+        assertEquals("Poprawiony film", updated.youtubeVideos.first().title)
+        assertEquals("Nowy film", updated.youtubeVideos.last().title)
     }
 
     @Test
@@ -139,6 +174,14 @@ class VehicleDocumentationRulesTest {
         assertEquals("Dokument", PersonalDocumentationItemType.Document.defaultPersonalTitle())
         assertEquals("Link", PersonalDocumentationItemType.Link.personalLabel())
         assertEquals("Zdjecia", PersonalDocumentationItemType.Photo.categoryLabel())
+    }
+
+    @Test
+    fun documentationYoutubeVideoIdSupportsCommonYoutubeFormats() {
+        assertEquals("abc123xyz89", "https://youtu.be/abc123xyz89".documentationYoutubeVideoId())
+        assertEquals("abc123xyz89", "https://www.youtube.com/embed/abc123xyz89".documentationYoutubeVideoId())
+        assertEquals("abc123xyz89", "https://www.youtube.com/shorts/abc123xyz89".documentationYoutubeVideoId())
+        assertNull("https://example.com/video".documentationYoutubeVideoId())
     }
 
     private fun documentation() = RepairDocumentation(

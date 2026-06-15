@@ -20,6 +20,29 @@ class VehicleOverviewRulesTest {
     }
 
     @Test
+    fun belongsToRepairFallsBackToTitleAndAreaWhenIdsAreMissing() {
+        val repair = repair()
+        val documentation = documentation(repair).copy(repairId = "")
+        val shopping = shoppingItem(repairTitle = repair.title).copy(repairId = "")
+        val inventory = PartInventoryItem(
+            id = "inventory_1",
+            oemPartNumber = "11428575211",
+            manufacturerPartNumber = "MANN-HU816X",
+            name = "Filtr oleju",
+            manufacturer = "Mann",
+            repairTitle = repair.title,
+            quantity = 1,
+            purchasePrice = "42.50",
+            realOemUrl = null,
+            repairId = null
+        )
+
+        assertTrue(documentation.belongsToRepair(repair))
+        assertTrue(shopping.belongsToRepair(repair))
+        assertTrue(inventory.belongsToRepair(repair))
+    }
+
+    @Test
     fun nextAvailableRepairTitleFindsNextFreeSuffix() {
         val repairs = listOf(
             repair(title = "Importowana naprawa"),
@@ -28,6 +51,13 @@ class VehicleOverviewRulesTest {
         )
 
         assertEquals("Importowana naprawa (4)", repairs.nextAvailableRepairTitle("Importowana naprawa"))
+    }
+
+    @Test
+    fun nextAvailableRepairTitleUsesDefaultBaseWhenInputIsBlank() {
+        val repairs = listOf(repair(title = "Importowana naprawa (2)"))
+
+        assertEquals("Importowana naprawa (3)", repairs.nextAvailableRepairTitle("   "))
     }
 
     @Test
@@ -135,6 +165,20 @@ class VehicleOverviewRulesTest {
         assertEquals("Dokumentacja: Nowa nazwa", renamed.documentation.title)
         assertTrue(renamed.documentation.summary.contains("Nowa nazwa"))
         assertEquals("Nowa nazwa", renamed.shoppingList.single().repairTitle)
+    }
+
+    @Test
+    fun archiveHelpersPreferExplicitPartKeysAndFilterPlaceholderValues() {
+        val item = shoppingItem(
+            id = "",
+            partNumber = "3332 676 3092",
+            manufacturerPartNumber = "do uzupelnienia"
+        )
+
+        assertEquals("part_3332_676_3092", item.archiveMergeKey(0))
+        assertEquals("lem_123", "LEM-123".normalizedArchivePartKey())
+        assertFalse("do_uzupelnienia".isUsableArchivePartKey())
+        assertTrue("lem_123".isUsableArchivePartKey())
     }
 
     private fun repair(

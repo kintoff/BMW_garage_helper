@@ -67,6 +67,21 @@ class VehiclePartsCatalogParsingTest {
     }
 
     @Test
+    fun productImageUrlsByArticleCodeFallsBackToLazyImageSource() {
+        val html = """
+            <div class="c-product__panel" data-article-code="33326763092">
+              <script>CustomLazySrc: '/images/lazy.jpg'</script>
+            </div>
+            <div id="hook_seodescriptionbottomhook"></div>
+        """.trimIndent()
+
+        assertEquals(
+            "https://czescidobmw.pl/images/lazy.jpg",
+            productImageUrlsByArticleCode(html)["33326763092"]
+        )
+    }
+
+    @Test
     fun absoluteCzescidobmwUrlBuildsAbsolutePaths() {
         assertEquals("https://czescidobmw.pl/images/tuleja.jpg", absoluteCzescidobmwUrl("/images/tuleja.jpg"))
         assertEquals("https://czescidobmw.pl/images/tuleja.jpg", absoluteCzescidobmwUrl("images/tuleja.jpg"))
@@ -99,6 +114,15 @@ class VehiclePartsCatalogParsingTest {
     }
 
     @Test
+    fun parsePartLabelTextFallsBackToGenericManufacturerNumber() {
+        val parsed = parsePartLabelText("BMW 31 12 6 789 111 Sachs 998877")
+
+        assertEquals("31126789111", parsed.oemPartNumber)
+        assertEquals("998877", parsed.manufacturerPartNumber)
+        assertEquals("BMW", parsed.manufacturer)
+    }
+
+    @Test
     fun findBmwOemPartNumberNormalizesCommonOcrMistakes() {
         assertEquals("33326763092", findBmwOemPartNumber("33 32 6 763 O92"))
         assertNull(findBmwOemPartNumber("brak numeru"))
@@ -110,5 +134,20 @@ class VehiclePartsCatalogParsingTest {
             "ZA OL BMW 33 32 6 763 092",
             normalizeLabelText("Zażółć BMW 33 32 6 763 092")
         )
+    }
+
+    @Test
+    fun helperFunctionsNormalizeNumbersAndHtmlEntities() {
+        assertEquals("123456", "12-34/56".onlyDigits())
+        assertEquals("10021", "IOO2L".normalizeOcrNumber())
+        assertEquals("BMW \"Lemforder\" & test", decodeHtmlCompat("BMW &quot;Lemforder&quot; &amp; test"))
+    }
+
+    @Test
+    fun imageSearchUrlForEncodesQuery() {
+        val url = imageSearchUrlFor("33326763092", "Lemforder")
+
+        assertTrue(url.contains("tbm=isch"))
+        assertTrue(url.contains("33326763092+BMW+Lemforder"))
     }
 }

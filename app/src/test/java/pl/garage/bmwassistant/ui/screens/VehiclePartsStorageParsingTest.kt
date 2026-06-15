@@ -40,6 +40,14 @@ class VehiclePartsStorageParsingTest {
     }
 
     @Test
+    fun normalizeAllegroOfferInputStripsWhitespaceAndHandlesRelativePathWithoutSlash() {
+        assertEquals(
+            "https://allegro.pl/oferta/test-oferty-123",
+            normalizeAllegroOfferInput(" oferta/test-oferty-123 ")
+        )
+    }
+
+    @Test
     fun parseAllegroOfferDetailsReadsJsonLdProduct() {
         val html = """
             <html><head>
@@ -107,6 +115,31 @@ class VehiclePartsStorageParsingTest {
     }
 
     @Test
+    fun jsonObjectOfferParsingReadsItemOfferedAndFallbackUrl() {
+        val details = JSONObject()
+            .put("@type", "Offer")
+            .put("itemOffered", JSONObject().put("name", "Pompa wody BMW"))
+            .put("price", "420")
+            .toAllegroOfferDetails("https://fallback.example.com")
+
+        assertNotNull(details)
+        assertEquals("Pompa wody BMW", details?.title)
+        assertEquals("420,00 PLN", details?.price)
+        assertEquals("https://fallback.example.com", details?.offerUrl)
+    }
+
+    @Test
+    fun extractAllegroJsonLdDetailsReturnsNullForUnsupportedType() {
+        val html = """
+            <script type="application/ld+json">
+            {"@type":"BreadcrumbList","name":"Nawigacja"}
+            </script>
+        """.trimIndent()
+
+        assertNull(extractAllegroJsonLdDetails(html, "https://fallback.example.com"))
+    }
+
+    @Test
     fun extractHtmlMetaContentDecodesHtmlEntities() {
         val html = """<meta property="og:title" content="BMW &amp; Lemforder"/>"""
 
@@ -114,8 +147,20 @@ class VehiclePartsStorageParsingTest {
     }
 
     @Test
+    fun extractHtmlMetaContentSupportsContentBeforeAttribute() {
+        val html = """<meta content="249.90" property="product:price:amount"/>"""
+
+        assertEquals("249.90", extractHtmlMetaContent(html, "property", "product:price:amount"))
+    }
+
+    @Test
     fun allegroUrlDetectionRecognizesValidOfferLinks() {
         assertTrue("https://allegro.pl/oferta/test".isAllegroOfferUrl())
         assertTrue("/oferta/test".isAllegroOfferUrl())
+    }
+
+    @Test
+    fun allegroUrlDetectionRejectsNonOfferLinks() {
+        assertTrue(!"https://allegro.pl/kategoria/czesci".isAllegroOfferUrl())
     }
 }

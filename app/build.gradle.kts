@@ -63,6 +63,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+            enableAndroidTestCoverage = true
+        }
+
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -133,38 +138,61 @@ jacoco {
     toolVersion = "0.8.12"
 }
 
-tasks.register<JacocoReport>("jacocoDebugUnitTestReport") {
-    dependsOn("testDebugUnitTest")
+val jacocoDebugFileFilter = listOf(
+    "**/R.class",
+    "**/R$*.class",
+    "**/BuildConfig.*",
+    "**/Manifest*.*",
+    "**/*Test*.*",
+    "**/*Preview*.*",
+    "**/*\$Companion.*"
+)
 
+fun Project.debugCoverageClassDirectories() = files(
+    fileTree("${layout.buildDirectory.get()}/intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes") {
+        exclude(jacocoDebugFileFilter)
+    },
+    fileTree("${layout.buildDirectory.get()}/intermediates/javac/debug/compileDebugJavaWithJavac/classes") {
+        exclude(jacocoDebugFileFilter)
+    }
+)
+
+fun JacocoReport.configureDebugCoverageReport() {
     reports {
         xml.required.set(true)
         html.required.set(true)
         csv.required.set(false)
     }
 
-    val fileFilter = listOf(
-        "**/R.class",
-        "**/R$*.class",
-        "**/BuildConfig.*",
-        "**/Manifest*.*",
-        "**/*Test*.*",
-        "**/*Preview*.*",
-        "**/*\$Companion.*"
-    )
+    classDirectories.setFrom(project.debugCoverageClassDirectories())
+    sourceDirectories.setFrom(files("src/main/java", "src/main/kotlin"))
+}
 
-    classDirectories.setFrom(
-        files(
-            fileTree("${layout.buildDirectory.get()}/tmp/kotlin-classes/debug") {
-                exclude(fileFilter)
-            }
-        )
-    )
-    sourceDirectories.setFrom(files("src/main/java"))
+tasks.register<JacocoReport>("jacocoDebugUnitTestReport") {
+    dependsOn("testDebugUnitTest")
+
+    configureDebugCoverageReport()
+
     executionData.setFrom(
         fileTree(layout.buildDirectory) {
             include(
                 "jacoco/testDebugUnitTest.exec",
                 "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec"
+            )
+        }
+    )
+}
+
+tasks.register<JacocoReport>("jacocoDebugCombinedCoverageReport") {
+    configureDebugCoverageReport()
+
+    executionData.setFrom(
+        fileTree(layout.buildDirectory) {
+            include(
+                "jacoco/testDebugUnitTest.exec",
+                "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec",
+                "outputs/code_coverage/debugAndroidTest/connected/**/*.ec",
+                "outputs/managed_device_code_coverage/**/*.ec"
             )
         }
     )

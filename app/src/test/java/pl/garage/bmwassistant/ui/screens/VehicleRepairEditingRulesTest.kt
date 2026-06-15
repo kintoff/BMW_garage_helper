@@ -8,7 +8,9 @@ import pl.garage.bmwassistant.model.PersonalDocumentationItemType
 import pl.garage.bmwassistant.model.RepairCheckpoint
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
+import pl.garage.bmwassistant.model.TisDocumentationLink
 import pl.garage.bmwassistant.model.VehicleArea
+import pl.garage.bmwassistant.model.YoutubeVideo
 
 class VehicleRepairEditingRulesTest {
 
@@ -97,8 +99,38 @@ class VehicleRepairEditingRulesTest {
     }
 
     @Test
+    fun effectiveTisDocumentsKeepsStructuredEntriesWhenPresent() {
+        val explicit = listOf(TisDocumentationLink("TIS tyl", "https://tis.example/tyl"))
+
+        val links = documentation(repair()).copy(
+            tisLinks = listOf("legacy"),
+            tisDocuments = explicit
+        ).effectiveTisDocuments()
+
+        assertEquals(explicit, links)
+    }
+
+    @Test
+    fun effectiveYoutubeVideosKeepsStructuredEntriesWhenPresent() {
+        val explicit = listOf(
+            YoutubeVideo(
+                title = "Instrukcja",
+                url = "https://youtube.com/watch?v=abc123xyz89"
+            )
+        )
+
+        val videos = documentation(repair()).copy(
+            youtubeLinks = listOf("legacy"),
+            youtubeVideos = explicit
+        ).effectiveYoutubeVideos()
+
+        assertEquals(explicit, videos)
+    }
+
+    @Test
     fun withHttpsPrefixAddsSchemeOnlyWhenMissing() {
         assertEquals("https://newtis.info/test", " newtis.info/test ".withHttpsPrefix())
+        assertEquals("http://example.com", "http://example.com".withHttpsPrefix())
         assertEquals("https://example.com", "https://example.com".withHttpsPrefix())
         assertEquals("content://local/photo", "content://local/photo".withHttpsPrefix())
     }
@@ -108,6 +140,7 @@ class VehicleRepairEditingRulesTest {
         assertEquals("Zdjecie", PersonalDocumentationItemType.Photo.defaultDocumentationTitle())
         assertEquals("Dokument", PersonalDocumentationItemType.Document.defaultDocumentationTitle())
         assertEquals("Notatka", PersonalDocumentationItemType.Text.defaultDocumentationTitle())
+        assertEquals("Plik", PersonalDocumentationItemType.File.defaultDocumentationTitle())
     }
 
     private fun repair(

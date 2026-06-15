@@ -19,3 +19,8 @@ if [[ "${1:-}" == "--coverage" ]]; then
   echo "Generuje raport pokrycia dla testow JVM..."
   ./gradlew :app:jacocoDebugUnitTestReport
 fi
+
+if [[ "${1:-}" == "--combined-coverage" ]]; then
+  echo "Generuje wspolny raport pokrycia JVM + androidTest z dostepnych danych..."
+  ./gradlew :app:jacocoDebugCombinedCoverageReport
+fi
