@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,6 +84,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -122,6 +124,8 @@ fun VehiclePartsStorageScreen(
     var shoppingItemPendingEdit by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingDeletion by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPendingAllegroActions by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPendingAllegroImport by remember { mutableStateOf<ShoppingListItem?>(null) }
     var selectedSectionName by rememberSaveable(vehicle.id, initialShoppingRepairTitle) {
         mutableStateOf(initialSection?.name)
     }
@@ -271,6 +275,32 @@ fun VehiclePartsStorageScreen(
         )
     }
 
+    shoppingItemPendingAllegroActions?.let { item ->
+        ShoppingItemAllegroActionsDialog(
+            item = item,
+            onDismiss = { shoppingItemPendingAllegroActions = null },
+            onOpenImport = {
+                shoppingItemPendingAllegroActions = null
+                shoppingItemPendingAllegroImport = item
+            }
+        )
+    }
+
+    shoppingItemPendingAllegroImport?.let { item ->
+        ImportAllegroOfferDialog(
+            item = item,
+            onDismiss = { shoppingItemPendingAllegroImport = null },
+            onSave = { updatedItem ->
+                updateShoppingList(
+                    storedShoppingList.map {
+                        if (it.stableId() == item.stableId()) updatedItem else it
+                    }
+                )
+                shoppingItemPendingAllegroImport = null
+            }
+        )
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -351,7 +381,8 @@ fun VehiclePartsStorageScreen(
                                     onDeleteItem = { shoppingItemPendingDeletion = it },
                                     onReceiveItem = { item ->
                                         shoppingItemPendingReceive = item
-                                    }
+                                    },
+                                    onAllegroAction = { shoppingItemPendingAllegroActions = it }
                                 )
                             }
                         }
@@ -460,68 +491,6 @@ private fun nextPartId(parts: List<PartInventoryItem>): String =
 
 private fun nextShoppingItemId(items: List<ShoppingListItem>): String =
     "shopping-${(items.mapNotNull { it.id.removePrefix("shopping-").toIntOrNull() }.maxOrNull() ?: 0) + 1}"
-
-private fun PartInventoryItem.stableId(): String =
-    id.ifBlank { "$repairId|$repairTitle|$oemPartNumber|$manufacturerPartNumber|$name" }
-
-fun ShoppingListItem.stableId(): String =
-    id.ifBlank { "$repairTitle|$partNumber|$manufacturerPartNumber|$name" }
-
-fun ShoppingListItem.toInventoryPart(
-    nextId: String,
-    receivedQuantity: Int = quantity,
-): PartInventoryItem =
-    PartInventoryItem(
-        id = nextId,
-        oemPartNumber = partNumber.ifBlank { "do uzupelnienia" },
-        manufacturerPartNumber = manufacturerPartNumber.ifBlank { partNumber.ifBlank { "do uzupelnienia" } },
-        name = name,
-        manufacturer = manufacturer.ifBlank { "do uzupelnienia" },
-        repairTitle = repairTitle.ifBlank { null },
-        quantity = receivedQuantity.coerceAtLeast(1),
-        purchasePrice = price.ifBlank { "do uzupelnienia" },
-        realOemUrl = realOemUrl,
-        photoUri = imageUri,
-        repairId = repairId.ifBlank { null }
-    )
-
-private fun List<ShoppingListItem>.primaryArea(): VehicleArea =
-    groupBy { it.area }
-        .maxByOrNull { (_, items) -> items.size }
-        ?.key
-        ?: VehicleArea.Service
-
-private fun List<ShoppingListItem>.areaSummaryLabel(): String? {
-    val distinctAreas = map { it.area }.distinct()
-    return when {
-        distinctAreas.isEmpty() -> null
-        distinctAreas.size == 1 -> distinctAreas.first().label
-        else -> "${distinctAreas.size} obszary"
-    }
-}
-
-private fun shoppingTotalLabel(items: List<ShoppingListItem>): String {
-    val total = items.sumOf { item ->
-        val price = parsePriceAmount(item.price) ?: 0.0
-        price * item.quantity
-    }
-    return if (total > 0.0) {
-        "Wartosc: ${"%.2f".format(Locale.US, total).replace('.', ',')} PLN"
-    } else {
-        "Wartosc do uzupelnienia"
-    }
-}
-
-private fun parsePriceAmount(value: String): Double? {
-    val normalized = value
-        .replace("PLN", "", ignoreCase = true)
-        .replace("zl", "", ignoreCase = true)
-        .replace("zł", "", ignoreCase = true)
-        .replace(" ", "")
-        .replace(",", ".")
-    val matched = Regex("""\d+(\.\d+)?""").find(normalized)?.value ?: return null
-    return matched.toDoubleOrNull()
-}
 
 @Composable
 private fun PartsStorageTile(
@@ -1269,6 +1238,7 @@ private fun ShoppingListSection(
     onEditItem: (ShoppingListItem) -> Unit,
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
+    onAllegroAction: (ShoppingListItem) -> Unit,
 ) {
     var expandedRepairTitles by rememberSaveable(shoppingList, initialRepairTitle) {
         mutableStateOf(
@@ -1315,7 +1285,8 @@ private fun ShoppingListSection(
                         },
                         onEditItem = onEditItem,
                         onDeleteItem = onDeleteItem,
-                        onReceiveItem = onReceiveItem
+                        onReceiveItem = onReceiveItem,
+                        onAllegroAction = onAllegroAction
                     )
                 }
         }
@@ -1331,6 +1302,7 @@ private fun ExpandableRepairShoppingGroup(
     onEditItem: (ShoppingListItem) -> Unit,
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
+    onAllegroAction: (ShoppingListItem) -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1404,7 +1376,8 @@ private fun ExpandableRepairShoppingGroup(
                     items = items,
                     onEditItem = onEditItem,
                     onDeleteItem = onDeleteItem,
-                    onReceiveItem = onReceiveItem
+                    onReceiveItem = onReceiveItem,
+                    onAllegroAction = onAllegroAction
                 )
             }
         }
@@ -1417,6 +1390,7 @@ private fun ShoppingCardList(
     onEditItem: (ShoppingListItem) -> Unit,
     onDeleteItem: (ShoppingListItem) -> Unit,
     onReceiveItem: (ShoppingListItem) -> Unit,
+    onAllegroAction: (ShoppingListItem) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         items.forEach { item ->
@@ -1424,7 +1398,8 @@ private fun ShoppingCardList(
                 item = item,
                 onEditItem = { onEditItem(item) },
                 onDeleteItem = { onDeleteItem(item) },
-                onReceiveItem = { onReceiveItem(item) }
+                onReceiveItem = { onReceiveItem(item) },
+                onAllegroAction = { onAllegroAction(item) }
             )
         }
     }
@@ -1436,6 +1411,7 @@ private fun ShoppingListItemCard(
     onEditItem: () -> Unit,
     onDeleteItem: () -> Unit,
     onReceiveItem: () -> Unit,
+    onAllegroAction: () -> Unit,
 ) {
     val manufacturerCode = item.manufacturerPartNumber.trim()
     val oemCode = item.partNumber.trim()
@@ -1444,7 +1420,12 @@ private fun ShoppingListItemCard(
             manufacturerCode.lowercase(Locale.getDefault()) != oemCode.lowercase(Locale.getDefault())
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {},
+                onLongClick = onAllegroAction
+            ),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -1541,6 +1522,186 @@ private fun ShoppingListItemCard(
             }
         }
     }
+}
+
+@Composable
+private fun ShoppingItemAllegroActionsDialog(
+    item: ShoppingListItem,
+    onDismiss: () -> Unit,
+    onOpenImport: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Allegro dla pozycji") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = item.name,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Przytrzymana pozycja moze pobrac cene i zdjecie z wklejonego linku Allegro.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onOpenImport) {
+                Text("Wklej link Allegro")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ImportAllegroOfferDialog(
+    item: ShoppingListItem,
+    onDismiss: () -> Unit,
+    onSave: (ShoppingListItem) -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    val coroutineScope = rememberCoroutineScope()
+    val suggestedQuery = remember(item) {
+        item.partNumber
+            .filter { it.isLetterOrDigit() }
+            .ifBlank { item.partNumber.trim() }
+    }
+    val suggestedSearchUrl = remember(suggestedQuery) { allegroSearchUrlFor(suggestedQuery) }
+    var offerUrl by remember(item) {
+        mutableStateOf(
+            item.shopUrl
+                ?.takeIf { it.isAllegroOfferUrl() }
+                .orEmpty()
+        )
+    }
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf<AllegroOfferDetails?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import ceny z Allegro") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = item.name,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "1. Otworz wyszukiwanie Allegro po numerze OEM. 2. Wybierz oferte. 3. Wklej link lub sam koniec adresu, a aplikacja sprobuje pobrac cene i zdjecie.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+                TextButton(onClick = { uriHandler.openUri(suggestedSearchUrl) }) {
+                    Text("Szukaj tej czesci na Allegro")
+                }
+                GarageTextField(
+                    value = offerUrl,
+                    onValueChange = {
+                        offerUrl = it
+                        errorMessage = null
+                        preview = null
+                    },
+                    label = "Link oferty Allegro",
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Wklej pelny link oferty Allegro"
+                )
+                TextButton(
+                    enabled = offerUrl.isNotBlank() && !isLoading,
+                    onClick = {
+                        coroutineScope.launch {
+                            isLoading = true
+                            errorMessage = null
+                            preview = null
+                            val result = runCatching {
+                                fetchAllegroOfferDetails(
+                                    inputUrl = offerUrl
+                                )
+                            }
+                            preview = result.getOrNull()
+                            if (preview == null) {
+                                errorMessage = result.exceptionOrNull()?.message
+                                    ?: "Nie udalo sie pobrac danych z Allegro. Sklep mogl zablokowac automatyczny odczyt tej oferty."
+                            }
+                            isLoading = false
+                        }
+                    }
+                ) {
+                    Text(if (isLoading) "Pobieram..." else "Pobierz dane oferty")
+                }
+                errorMessage?.let { message ->
+                    EmptyPartsRow(message)
+                }
+                preview?.let { details ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            details.imageUrl?.let { imageUrl ->
+                                PartPhotoContent(
+                                    photoUri = imageUrl,
+                                    height = 130.dp,
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+                            Text(
+                                text = details.title,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            InventoryInfoPill(
+                                label = "Cena z Allegro",
+                                value = details.price,
+                                emphasize = true
+                            )
+                            Text(
+                                text = details.offerUrl,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = preview != null,
+                onClick = {
+                    val details = preview ?: return@TextButton
+                    onSave(
+                        item.copy(
+                            source = "allegro.pl",
+                            price = details.price,
+                            imageUri = details.imageUrl ?: item.imageUri,
+                            shopUrl = details.offerUrl
+                        )
+                    )
+                }
+            ) {
+                Text("Zapisz do pozycji")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Zamknij")
+            }
+        }
+    )
 }
 
 @Composable
@@ -2836,101 +2997,6 @@ suspend fun fetchCzescidobmwResults(partNumber: String): List<MockPartLookupResu
         )
     }
 
-private fun parseCzescidobmwResults(
-    html: String,
-    searchUrl: String,
-    searchedOemPartNumber: String,
-): List<MockPartLookupResult> {
-    val analyticsJson = Regex(
-        pattern = "var googleAnalyticsData = (\\{.*?\\});",
-        option = RegexOption.DOT_MATCHES_ALL
-    ).find(html)?.groupValues?.getOrNull(1) ?: return emptyList()
-
-    val items = JSONObject(analyticsJson).optJSONArray("items") ?: return emptyList()
-    val imageUrlsByArticleCode = productImageUrlsByArticleCode(html)
-    return buildList {
-        for (index in 0 until items.length()) {
-            val item = items.optJSONObject(index) ?: continue
-            val itemId = decodeHtml(item.optString("item_id"))
-            if (itemId.isBlank()) continue
-            val itemName = decodeHtml(item.optString("item_name"))
-            val name = itemName.ifBlank { itemId }
-            val brand = decodeHtml(item.optString("item_brand")).ifBlank { "Nieznany producent" }
-            val price = item.optDouble("price", Double.NaN)
-            val priceLabel = if (price.isNaN()) {
-                "do sprawdzenia"
-            } else {
-                "%.2f PLN".format(Locale.US, price)
-            }
-            val imageUrl = imageUrlsByArticleCode[itemId]
-
-            add(
-                MockPartLookupResult(
-                    oemPartNumber = searchedOemPartNumber,
-                    manufacturerPartNumber = itemId,
-                    name = name,
-                    manufacturer = brand,
-                    realOemPrice = "do sprawdzenia",
-                    shopPrice = priceLabel,
-                    diagram = "do uzupelnienia z RealOEM",
-                    realOemUrl = "https://www.realoem.com/bmw/partxref?q=$itemId",
-                    shopUrl = searchUrl,
-                    imageSource = if (imageUrl == null) "brak zdjecia w czescidobmw.pl" else "czescidobmw.pl",
-                    imageUrl = imageUrl,
-                    imageSearchUrl = imageSearchUrlFor(itemId, brand)
-                )
-            )
-        }
-    }
-}
-
-private fun productImageUrlsByArticleCode(html: String): Map<String, String> {
-    val productPanels = Regex(
-        pattern = "<div class=\"c-product__panel[\\s\\S]*?(?=<div class=\"c-product__panel|<div id=\"hook_seodescriptionbottomhook)",
-    ).findAll(html)
-
-    return buildMap {
-        productPanels.forEach { panelMatch ->
-            val panel = panelMatch.value
-            val articleCode = Regex("data-article-code=\"([^\"]+)\"")
-                .find(panel)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.let(::decodeHtml)
-                ?: return@forEach
-
-            val imageUrl = Regex("class=\"c-product-image__link\" href=\"([^\"]+)\"")
-                .find(panel)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.let(::decodeHtml)
-                ?: Regex("CustomLazySrc: '([^']+)'")
-                    .find(panel)
-                    ?.groupValues
-                    ?.getOrNull(1)
-                    ?.let(::decodeHtml)
-
-            if (!imageUrl.isNullOrBlank() && !imageUrl.endsWith("BMW.svg")) {
-                put(articleCode, absoluteCzescidobmwUrl(imageUrl))
-            }
-        }
-    }
-}
-
-private fun absoluteCzescidobmwUrl(url: String): String =
-    when {
-        url.startsWith("http://") || url.startsWith("https://") -> url
-        url.startsWith("/") -> "https://czescidobmw.pl$url"
-        else -> "https://czescidobmw.pl/$url"
-    }
-
-private fun imageSearchUrlFor(
-    partNumber: String,
-    manufacturer: String,
-): String {
-    val query = URLEncoder.encode("$partNumber BMW $manufacturer czesc zdjecie", "UTF-8")
-    return "https://www.google.com/search?tbm=isch&q=$query"
-}
 
 fun recognizePartLabelFromBitmap(
     bitmap: Bitmap,
@@ -2996,101 +3062,11 @@ private fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap? =
         }
     }.getOrNull()
 
-private fun parsePartLabelText(rawText: String): ParsedPartLabel {
-    val normalizedText = normalizeLabelText(rawText)
-
-    val manufacturer = when {
-        normalizedText.contains("FEBI") || normalizedText.contains("BILSTEIN") -> "FEBI"
-        normalizedText.contains("LEMFORDER") || normalizedText.contains("LEMF") -> "LEMFORDER"
-        normalizedText.contains("BMW") -> "BMW"
-        else -> null
-    }
-
-    val oemPartNumber = findBmwOemPartNumber(normalizedText)
-    val manufacturerPartNumber = findManufacturerPartNumber(
-        normalizedText = normalizedText,
-        manufacturer = manufacturer,
-        oemPartNumber = oemPartNumber
-    )
-
-    return ParsedPartLabel(
-        oemPartNumber = oemPartNumber,
-        manufacturerPartNumber = manufacturerPartNumber,
-        manufacturer = manufacturer
-    )
+private fun allegroSearchUrlFor(query: String): String {
+    val normalizedQuery = query.ifBlank { "BMW czesci" }
+    val encoded = URLEncoder.encode(normalizedQuery, "UTF-8")
+    return "https://allegro.pl/listing?string=$encoded"
 }
-
-private fun normalizeLabelText(rawText: String): String =
-    rawText
-        .uppercase(Locale.ROOT)
-        .replace("Ö", "O")
-        .replace("Ó", "O")
-        .replace("Ł", "L")
-        .replace(Regex("[^A-Z0-9/ .:-]"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
-
-private fun findBmwOemPartNumber(text: String): String? {
-    val spacedBmwPattern = Regex("\\b[0-9OQIIL]{2}\\s*[0-9OQIIL]{2}\\s*[0-9OQIIL]\\s*[0-9OQIIL]{3}\\s*[0-9OQIIL]{3}\\b")
-    val compactBmwPattern = Regex("\\b[0-9OQIIL]{11}\\b")
-
-    return spacedBmwPattern.findAll(text)
-        .map { it.value.normalizeOcrNumber() }
-        .firstOrNull { it.length == 11 }
-        ?: compactBmwPattern.findAll(text)
-            .map { it.value.normalizeOcrNumber() }
-            .firstOrNull { it.length == 11 }
-}
-
-private fun findManufacturerPartNumber(
-    normalizedText: String,
-    manufacturer: String?,
-    oemPartNumber: String?,
-): String? {
-    if (manufacturer == "FEBI") {
-        Regex("\\b(?:NR|NO)\\.?\\s*(\\d{4,6})\\b")
-            .find(normalizedText)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.let { return it }
-    }
-
-    if (manufacturer == "LEMFORDER") {
-        Regex("\\b(\\d{5}\\s*\\d{2})(?:\\s+\\d{3})?\\b")
-            .find(normalizedText)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.replace(Regex("\\s+"), " ")
-            ?.trim()
-            ?.let { return it }
-    }
-
-    return Regex("\\b\\d{4,8}\\b")
-        .findAll(normalizedText)
-        .map { it.value.onlyDigits() }
-        .firstOrNull { candidate ->
-            candidate != oemPartNumber &&
-                candidate.length in 4..8 &&
-                candidate != "000000"
-        }
-}
-
-private fun String.onlyDigits(): String = filter { it.isDigit() }
-
-private fun String.normalizeOcrNumber(): String =
-    uppercase(Locale.ROOT)
-        .mapNotNull { character ->
-            when (character) {
-                in '0'..'9' -> character
-                'O', 'Q' -> '0'
-                'I', 'L' -> '1'
-                else -> null
-            }
-        }
-        .joinToString("")
-
-private fun decodeHtml(value: String): String =
-    Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY).toString().trim()
 
 @Preview(showBackground = true, widthDp = 430)
 @Composable

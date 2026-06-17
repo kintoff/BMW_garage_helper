@@ -29,7 +29,7 @@ class VehicleStorage(context: Context) {
     }
 }
 
-private fun Vehicle.toJson(): JSONObject = JSONObject()
+internal fun Vehicle.toJson(): JSONObject = JSONObject()
     .put("id", stableVehicleId())
     .put("brand", brand)
     .put("model", model)
@@ -41,7 +41,7 @@ private fun Vehicle.toJson(): JSONObject = JSONObject()
     .put("note", note)
     .put("partsCatalogUrl", partsCatalogUrl)
 
-private fun JSONObject.toVehicle(): Vehicle {
+internal fun JSONObject.toVehicle(): Vehicle {
     val brand = optString("brand")
     val model = optString("model")
     val generation = optString("generation")
@@ -66,7 +66,7 @@ private fun JSONObject.toVehicle(): Vehicle {
     )
 }
 
-private fun Vehicle.stableVehicleId(): String =
+internal fun Vehicle.stableVehicleId(): String =
     id.ifBlank {
         legacyVehicleId(
             vin = vin,
@@ -76,7 +76,7 @@ private fun Vehicle.stableVehicleId(): String =
         )
     }
 
-private fun legacyVehicleId(
+internal fun legacyVehicleId(
     vin: String,
     brand: String,
     model: String,

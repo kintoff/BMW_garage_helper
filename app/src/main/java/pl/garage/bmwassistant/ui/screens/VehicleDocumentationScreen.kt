@@ -62,6 +62,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -622,8 +623,8 @@ private fun RepairDocumentationDetailsScreen(
                 )
             }
             onDocumentationUpdated(
-                documentation.copy(
-                    personalNotes = documentation.personalNotes + PersonalDocumentationItem(
+                documentation.withAddedPersonalNote(
+                    PersonalDocumentationItem(
                         id = "personal-${System.currentTimeMillis()}",
                         type = type,
                         title = type.defaultPersonalTitle(),
@@ -666,10 +667,7 @@ private fun RepairDocumentationDetailsScreen(
             onDismiss = { isAddingTisLink = false },
             onSave = { link ->
                 onDocumentationUpdated(
-                    documentation.copy(
-                        tisDocuments = documentation.effectiveTisDocuments() + link,
-                        tisLinks = emptyList()
-                    )
+                    documentation.withAddedDocumentationTisLink(link)
                 )
                 isAddingTisLink = false
             }
@@ -682,23 +680,13 @@ private fun RepairDocumentationDetailsScreen(
             onDismiss = { tisLinkPendingEdit = null },
             onDelete = {
                 onDocumentationUpdated(
-                    documentation.copy(
-                        tisDocuments = documentation.effectiveTisDocuments()
-                            .filterIndexed { index, _ -> index != indexedLink.index },
-                        tisLinks = emptyList()
-                    )
+                    documentation.withRemovedDocumentationTisLink(indexedLink.index)
                 )
                 tisLinkPendingEdit = null
             },
             onSave = { link ->
                 onDocumentationUpdated(
-                    documentation.copy(
-                        tisDocuments = documentation.effectiveTisDocuments()
-                            .mapIndexed { index, currentLink ->
-                                if (index == indexedLink.index) link else currentLink
-                            },
-                        tisLinks = emptyList()
-                    )
+                    documentation.withUpdatedDocumentationTisLink(indexedLink.index, link)
                 )
                 tisLinkPendingEdit = null
             }
@@ -710,10 +698,7 @@ private fun RepairDocumentationDetailsScreen(
             onDismiss = { isAddingYoutubeLink = false },
             onSave = { video ->
                 onDocumentationUpdated(
-                    documentation.copy(
-                        youtubeVideos = documentation.effectiveYoutubeVideos() + video,
-                        youtubeLinks = emptyList()
-                    )
+                    documentation.withAddedDocumentationYoutubeVideo(video)
                 )
                 isAddingYoutubeLink = false
             }
@@ -726,23 +711,13 @@ private fun RepairDocumentationDetailsScreen(
             onDismiss = { youtubeVideoPendingEdit = null },
             onDelete = {
                 onDocumentationUpdated(
-                    documentation.copy(
-                        youtubeVideos = documentation.effectiveYoutubeVideos()
-                            .filterIndexed { index, _ -> index != indexedVideo.index },
-                        youtubeLinks = emptyList()
-                    )
+                    documentation.withRemovedDocumentationYoutubeVideo(indexedVideo.index)
                 )
                 youtubeVideoPendingEdit = null
             },
             onSave = { video ->
                 onDocumentationUpdated(
-                    documentation.copy(
-                        youtubeVideos = documentation.effectiveYoutubeVideos()
-                            .mapIndexed { index, currentVideo ->
-                                if (index == indexedVideo.index) video else currentVideo
-                            },
-                        youtubeLinks = emptyList()
-                    )
+                    documentation.withUpdatedDocumentationYoutubeVideo(indexedVideo.index, video)
                 )
                 youtubeVideoPendingEdit = null
             }
@@ -755,7 +730,7 @@ private fun RepairDocumentationDetailsScreen(
             onDismiss = { personalNoteDialogType = null },
             onSave = { item ->
                 onDocumentationUpdated(
-                    documentation.copy(personalNotes = documentation.personalNotes + item)
+                    documentation.withAddedPersonalNote(item)
                 )
                 personalNoteDialogType = null
             }
@@ -769,21 +744,13 @@ private fun RepairDocumentationDetailsScreen(
             onDismiss = { personalNotePendingEdit = null },
             onDelete = {
                 onDocumentationUpdated(
-                    documentation.copy(
-                        personalNotes = documentation.personalNotes
-                            .filterIndexed { index, _ -> index != indexedItem.index }
-                    )
+                    documentation.withRemovedPersonalNote(indexedItem.index)
                 )
                 personalNotePendingEdit = null
             },
             onSave = { item ->
                 onDocumentationUpdated(
-                    documentation.copy(
-                        personalNotes = documentation.personalNotes
-                            .mapIndexed { index, currentItem ->
-                                if (index == indexedItem.index) item else currentItem
-                            }
-                    )
+                    documentation.withUpdatedPersonalNote(indexedItem.index, item)
                 )
                 personalNotePendingEdit = null
             }
@@ -908,8 +875,8 @@ private fun RepairDocumentationDetailsScreen(
                         DocumentationLinksTile(
                             title = "Schematy",
                             subtitle = "Linki do procedur TIS i schematow powiazanych z ta naprawa.",
-                            marker = "${documentation.effectiveTisDocuments().size} linkow",
-                            links = documentation.effectiveTisDocuments(),
+                            marker = "${documentation.effectiveDocumentationTisDocuments().size} linkow",
+                            links = documentation.effectiveDocumentationTisDocuments(),
                             isExpanded = isLinksExpanded,
                             onToggle = { isLinksExpanded = !isLinksExpanded },
                             onAddLink = { isAddingTisLink = true },
@@ -918,7 +885,7 @@ private fun RepairDocumentationDetailsScreen(
                             }
                         )
                         YoutubeLinksTile(
-                            videos = documentation.effectiveYoutubeVideos(),
+                            videos = documentation.effectiveDocumentationYoutubeVideos(),
                             isExpanded = isYoutubeExpanded,
                             onToggle = { isYoutubeExpanded = !isYoutubeExpanded },
                             onAddLink = { isAddingYoutubeLink = true },
@@ -1259,26 +1226,31 @@ private fun AddTisLinkDialog(
                     value = title,
                     onValueChange = { title = it },
                     label = "Nazwa",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("documentation_tis_title_input"),
                     placeholder = "Np. Demontaz kolektora / TIS"
                 )
                 GarageTextField(
                     value = link,
                     onValueChange = { link = it },
                     label = "Link",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("documentation_tis_link_input"),
                     placeholder = "https://www.newtis.info/..."
                 )
             }
         },
         confirmButton = {
             TextButton(
+                modifier = Modifier.testTag("documentation_tis_save_button"),
                 enabled = normalizedLink.isNotBlank(),
                 onClick = {
                     onSave(
                         TisDocumentationLink(
                             title = normalizedTitle.ifBlank { "Link TIS" },
-                            url = normalizedLink.withHttpsPrefix()
+                            url = normalizedLink.withDocumentationHttpsPrefix()
                         )
                     )
                 }
@@ -1289,7 +1261,10 @@ private fun AddTisLinkDialog(
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (onDelete != null) {
-                    TextButton(onClick = onDelete) {
+                    TextButton(
+                        modifier = Modifier.testTag("documentation_tis_delete_button"),
+                        onClick = onDelete
+                    ) {
                         Text("Usun")
                     }
                 }
@@ -1322,7 +1297,7 @@ private fun AddYoutubeLinkDialog(
             return@LaunchedEffect
         }
         titleLookupStatus = "Pobieram tytul filmu..."
-        val fetchedTitle = fetchYoutubeTitle(normalizedLink.withHttpsPrefix())
+        val fetchedTitle = fetchYoutubeTitle(normalizedLink.withDocumentationHttpsPrefix())
         if (fetchedTitle.isNullOrBlank()) {
             titleLookupStatus = "Nie udalo sie pobrac tytulu. Mozesz wpisac go recznie."
         } else {
@@ -1347,7 +1322,9 @@ private fun AddYoutubeLinkDialog(
                         titleWasEdited = true
                     },
                     label = "Tytul filmu",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("documentation_youtube_title_input"),
                     placeholder = "np. Demontaz tylnej zwrotnicy E60"
                 )
                 titleLookupStatus?.let { status ->
@@ -1367,14 +1344,18 @@ private fun AddYoutubeLinkDialog(
                         }
                     },
                     label = "Link YouTube",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("documentation_youtube_link_input"),
                     placeholder = "https://www.youtube.com/watch?v=..."
                 )
                 GarageTextField(
                     value = note,
                     onValueChange = { note = it },
                     label = "Notatka",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("documentation_youtube_note_input"),
                     placeholder = "np. pokazuje uklad wahaczy od 08:30",
                     singleLine = false,
                     minLines = 3
@@ -1383,9 +1364,10 @@ private fun AddYoutubeLinkDialog(
         },
         confirmButton = {
             TextButton(
+                modifier = Modifier.testTag("documentation_youtube_save_button"),
                 enabled = normalizedLink.isNotBlank(),
                 onClick = {
-                    val normalizedUrl = normalizedLink.withHttpsPrefix()
+                    val normalizedUrl = normalizedLink.withDocumentationHttpsPrefix()
                     onSave(
                         YoutubeVideo(
                             title = normalizedTitle.ifBlank {
@@ -1403,7 +1385,10 @@ private fun AddYoutubeLinkDialog(
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (onDelete != null) {
-                    TextButton(onClick = onDelete) {
+                    TextButton(
+                        modifier = Modifier.testTag("documentation_youtube_delete_button"),
+                        onClick = onDelete
+                    ) {
                         Text("Usun")
                     }
                 }
@@ -1489,7 +1474,7 @@ private fun AddPersonalNoteDialog(
                             title = normalizedTitle,
                             text = text.trim(),
                             uri = initialItem?.uri,
-                            url = url.trim().takeIf { it.isNotBlank() }?.withHttpsPrefix()
+                            url = url.trim().takeIf { it.isNotBlank() }?.withDocumentationHttpsPrefix()
                         )
                     )
                 }
@@ -1611,7 +1596,10 @@ private fun DocumentationLinksTile(
                 }
             }
 
-            TextButton(onClick = onAddLink) {
+            TextButton(
+                modifier = Modifier.testTag("documentation_add_tis_button"),
+                onClick = onAddLink
+            ) {
                 Text("Dodaj link TIS")
             }
         }
@@ -2756,7 +2744,10 @@ private fun YoutubeLinksTile(
                 }
             }
 
-            TextButton(onClick = onAddLink) {
+            TextButton(
+                modifier = Modifier.testTag("documentation_add_youtube_button"),
+                onClick = onAddLink
+            ) {
                 Text("Dodaj film YouTube")
             }
         }
@@ -3262,7 +3253,7 @@ private fun DocumentationMaterialTile(
     }
 }
 
-private fun String.withHttpsPrefix(): String =
+private fun String.withDocumentationHttpsPrefix(): String =
     if (startsWith("http://") || startsWith("https://")) {
         this
     } else {
@@ -3320,7 +3311,24 @@ private fun importRepairDocumentationPackage(
             val manifestEntry = zip.getEntry("manifest.json") ?: return@runCatching null
             val manifest = zip.getInputStream(manifestEntry).bufferedReader().use { it.readText() }
             val documentationJson = JSONObject(manifest).optJSONObject("documentation") ?: return@runCatching null
-            documentationJson.toImportedDocumentation(context, zip, currentDocumentation)
+            val importDirectory = File(context.filesDir, "imported_repair_docs/${System.currentTimeMillis()}")
+
+            fun resolveAsset(rawUri: String?): String? {
+                if (rawUri.isNullOrBlank() || !rawUri.startsWith("package://")) return rawUri
+                val entryName = rawUri.removePrefix("package://")
+                val entry = zip.getEntry(entryName) ?: return null
+                importDirectory.mkdirs()
+                val destination = File(importDirectory, entryName.substringAfterLast('/'))
+                zip.getInputStream(entry).use { input ->
+                    destination.outputStream().use { output -> input.copyTo(output) }
+                }
+                return Uri.fromFile(destination).toString()
+            }
+
+            documentationJson.toImportedDocumentation(
+                currentDocumentation = currentDocumentation,
+                resolveAsset = ::resolveAsset
+            )
         }.also {
             cacheFile.delete()
         }
@@ -3338,7 +3346,7 @@ private fun RepairDocumentation.toExportJson(
             }
         })
         .put("tisDocuments", JSONArray().apply {
-            effectiveTisDocuments().forEach { link ->
+            effectiveDocumentationTisDocuments().forEach { link ->
                 put(JSONObject().put("title", link.title).put("url", link.url))
             }
         })
@@ -3366,7 +3374,7 @@ private fun RepairDocumentation.toExportJson(
             }
         })
         .put("youtubeVideos", JSONArray().apply {
-            effectiveYoutubeVideos().forEach { video ->
+            effectiveDocumentationYoutubeVideos().forEach { video ->
                 put(
                     JSONObject()
                         .put("title", video.title)
@@ -3389,42 +3397,6 @@ private fun RepairDocumentation.toExportJson(
             }
         })
 
-private fun JSONObject.toImportedDocumentation(
-    context: Context,
-    zip: ZipFile,
-    currentDocumentation: RepairDocumentation,
-): RepairDocumentation {
-    val importDirectory = File(context.filesDir, "imported_repair_docs/${System.currentTimeMillis()}")
-
-    fun resolveAsset(rawUri: String?): String? {
-        if (rawUri.isNullOrBlank() || !rawUri.startsWith("package://")) return rawUri
-        val entryName = rawUri.removePrefix("package://")
-        val entry = zip.getEntry(entryName) ?: return null
-        importDirectory.mkdirs()
-        val destination = File(importDirectory, entryName.substringAfterLast('/'))
-        zip.getInputStream(entry).use { input ->
-            destination.outputStream().use { output -> input.copyTo(output) }
-        }
-        return Uri.fromFile(destination).toString()
-    }
-
-    val importedTorqueTables = optJSONArray("torqueTables").toImportedTorqueTables(::resolveAsset)
-    return currentDocumentation.copy(
-        title = optString("title").ifBlank { currentDocumentation.title },
-        summary = optString("summary").ifBlank { currentDocumentation.summary },
-        archivedShoppingList = optJSONArray("archivedShoppingList").toImportedShoppingList(),
-        tisLinks = emptyList(),
-        tisDocuments = optJSONArray("tisDocuments").toImportedTisDocuments(),
-        torqueSpecs = importedTorqueTables.firstOrNull()?.torqueSpecs.orEmpty(),
-        torqueDiagramImageUri = importedTorqueTables.firstOrNull()?.diagramImageUri,
-        torqueDiagramAssignments = importedTorqueTables.firstOrNull()?.diagramAssignments.orEmpty(),
-        torqueTables = importedTorqueTables,
-        youtubeLinks = emptyList(),
-        youtubeVideos = optJSONArray("youtubeVideos").toImportedYoutubeVideos(),
-        personalNotes = optJSONArray("personalNotes").toImportedPersonalNotes(::resolveAsset)
-    )
-}
-
 private fun ShoppingListItem.toExportJson(): JSONObject =
     JSONObject()
         .put("id", id)
@@ -3442,34 +3414,6 @@ private fun ShoppingListItem.toExportJson(): JSONObject =
         .put("shopUrl", shopUrl)
         .put("realOemUrl", realOemUrl)
 
-private fun JSONArray?.toImportedShoppingList(): List<ShoppingListItem> {
-    if (this == null) return emptyList()
-    return buildList {
-        for (index in 0 until length()) {
-            val item = optJSONObject(index) ?: continue
-            add(
-                ShoppingListItem(
-                    id = item.optString("id"),
-                    partNumber = item.optString("partNumber"),
-                    manufacturerPartNumber = item.optString("manufacturerPartNumber"),
-                    name = item.optString("name"),
-                    manufacturer = item.optString("manufacturer"),
-                    repairTitle = item.optString("repairTitle"),
-                    repairId = item.optString("repairId"),
-                    area = runCatching { VehicleArea.valueOf(item.optString("area")) }
-                        .getOrDefault(VehicleArea.Service),
-                    quantity = item.optInt("quantity", 1),
-                    source = item.optString("source"),
-                    price = item.optString("price"),
-                    imageUri = item.optString("imageUri").ifBlank { null },
-                    shopUrl = item.optString("shopUrl").ifBlank { null },
-                    realOemUrl = item.optString("realOemUrl").ifBlank { null }
-                )
-            )
-        }
-    }
-}
-
 private fun TorqueSpec.toJson(): JSONObject =
     JSONObject()
         .put("component", component)
@@ -3479,120 +3423,6 @@ private fun TorqueSpec.toJson(): JSONObject =
         .put("torque", torque)
         .put("source", source)
         .put("notes", notes)
-
-private fun JSONArray?.toImportedTisDocuments(): List<TisDocumentationLink> {
-    if (this == null) return emptyList()
-    return buildList {
-        for (index in 0 until length()) {
-            val item = optJSONObject(index) ?: continue
-            val url = item.optString("url")
-            if (url.isBlank()) continue
-            add(
-                TisDocumentationLink(
-                    title = item.optString("title").ifBlank { "TIS ${index + 1}" },
-                    url = url
-                )
-            )
-        }
-    }
-}
-
-private fun JSONArray?.toImportedTorqueTables(
-    resolveAsset: (String?) -> String?,
-): List<TorqueSpecTable> {
-    if (this == null) return emptyList()
-    return buildList {
-        for (index in 0 until length()) {
-            val item = optJSONObject(index) ?: continue
-            add(
-                TorqueSpecTable(
-                    id = item.optString("id").ifBlank { "table-${index + 1}" },
-                    title = item.optString("title").ifBlank { "Tabela momentow ${index + 1}" },
-                    torqueSpecs = item.optJSONArray("torqueSpecs").toImportedTorqueSpecs(),
-                    diagramImageUri = resolveAsset(item.optString("diagramImageUri").ifBlank { null }),
-                    diagramAssignments = item.optJSONArray("diagramAssignments").toImportedDiagramAssignments()
-                )
-            )
-        }
-    }
-}
-
-private fun JSONArray?.toImportedTorqueSpecs(): List<TorqueSpec> {
-    if (this == null) return emptyList()
-    return buildList {
-        for (index in 0 until length()) {
-            val item = optJSONObject(index) ?: continue
-            add(
-                TorqueSpec(
-                    component = item.optString("component"),
-                    type = item.optString("type"),
-                    thread = item.optString("thread"),
-                    tighteningSpecifications = item.optString("tighteningSpecifications"),
-                    torque = item.optString("torque"),
-                    source = item.optString("source"),
-                    notes = item.optString("notes")
-                )
-            )
-        }
-    }
-}
-
-private fun JSONArray?.toImportedDiagramAssignments(): List<TorqueDiagramAssignment> {
-    if (this == null) return emptyList()
-    return buildList {
-        for (index in 0 until length()) {
-            val item = optJSONObject(index) ?: continue
-            add(
-                TorqueDiagramAssignment(
-                    torqueSpecIndex = item.optInt("torqueSpecIndex"),
-                    xRatio = item.optDouble("xRatio").toFloat(),
-                    yRatio = item.optDouble("yRatio").toFloat()
-                )
-            )
-        }
-    }
-}
-
-private fun JSONArray?.toImportedYoutubeVideos(): List<YoutubeVideo> {
-    if (this == null) return emptyList()
-    return buildList {
-        for (index in 0 until length()) {
-            val item = optJSONObject(index) ?: continue
-            val url = item.optString("url")
-            if (url.isBlank()) continue
-            add(
-                YoutubeVideo(
-                    title = item.optString("title").ifBlank { "Film YouTube ${index + 1}" },
-                    url = url,
-                    note = item.optString("note")
-                )
-            )
-        }
-    }
-}
-
-private fun JSONArray?.toImportedPersonalNotes(
-    resolveAsset: (String?) -> String?,
-): List<PersonalDocumentationItem> {
-    if (this == null) return emptyList()
-    return buildList {
-        for (index in 0 until length()) {
-            val item = optJSONObject(index) ?: continue
-            add(
-                PersonalDocumentationItem(
-                    id = item.optString("id").ifBlank { "personal-${System.currentTimeMillis()}-$index" },
-                    type = runCatching {
-                        PersonalDocumentationItemType.valueOf(item.optString("type"))
-                    }.getOrDefault(PersonalDocumentationItemType.Text),
-                    title = item.optString("title").ifBlank { "Wpis ${index + 1}" },
-                    text = item.optString("text"),
-                    uri = resolveAsset(item.optString("uri").ifBlank { null }),
-                    url = item.optString("url").ifBlank { null }
-                )
-            )
-        }
-    }
-}
 
 private fun Context.openAssetInputStream(uri: Uri) =
     if (uri.scheme == "file") {
@@ -3720,77 +3550,6 @@ private fun List<TorqueSpec>.mergeOcrBlock(): TorqueSpec {
         }.distinct().joinToString(" / ")
     )
 }
-
-private fun RepairDocumentation.effectiveTorqueTables(): List<TorqueSpecTable> =
-    torqueTables.ifEmpty {
-        if (
-            torqueSpecs.isEmpty() &&
-            torqueDiagramImageUri == null &&
-            torqueDiagramAssignments.isEmpty()
-        ) {
-            emptyList()
-        } else {
-            listOf(
-                TorqueSpecTable(
-                    id = "table-1",
-                    title = "Tabela momentow 1",
-                    torqueSpecs = torqueSpecs,
-                    diagramImageUri = torqueDiagramImageUri,
-                    diagramAssignments = torqueDiagramAssignments
-                )
-            )
-        }
-    }
-
-private fun RepairDocumentation.effectiveTisDocuments(): List<TisDocumentationLink> =
-    tisDocuments.ifEmpty {
-        tisLinks.mapIndexed { index, link ->
-            TisDocumentationLink(
-                title = "TIS ${index + 1}",
-                url = link
-            )
-        }
-    }
-
-private fun RepairDocumentation.effectiveYoutubeVideos(): List<YoutubeVideo> =
-    youtubeVideos.ifEmpty {
-        youtubeLinks.mapIndexed { index, link ->
-            YoutubeVideo(
-                title = link.youtubeVideoId()?.let { "Film YouTube $it" } ?: "Film YouTube ${index + 1}",
-                url = link
-            )
-        }
-    }
-
-private fun PersonalDocumentationItemType.defaultPersonalTitle(): String =
-    when (this) {
-        PersonalDocumentationItemType.Text -> "Notatka"
-        PersonalDocumentationItemType.Photo -> "Zdjecie"
-        PersonalDocumentationItemType.Video -> "Film"
-        PersonalDocumentationItemType.Document -> "Dokument"
-        PersonalDocumentationItemType.Link -> "Link"
-        PersonalDocumentationItemType.File -> "Plik"
-    }
-
-private fun PersonalDocumentationItemType.personalLabel(): String =
-    when (this) {
-        PersonalDocumentationItemType.Text -> "Notatka tekstowa"
-        PersonalDocumentationItemType.Photo -> "Zdjecie"
-        PersonalDocumentationItemType.Video -> "Film"
-        PersonalDocumentationItemType.Document -> "Dokument"
-        PersonalDocumentationItemType.Link -> "Link"
-        PersonalDocumentationItemType.File -> "Plik"
-    }
-
-private fun PersonalDocumentationItemType.categoryLabel(): String =
-    when (this) {
-        PersonalDocumentationItemType.Text -> "Notatki"
-        PersonalDocumentationItemType.Photo -> "Zdjecia"
-        PersonalDocumentationItemType.Video -> "Filmy"
-        PersonalDocumentationItemType.Document -> "Dokumenty"
-        PersonalDocumentationItemType.Link -> "Linki"
-        PersonalDocumentationItemType.File -> "Pliki"
-    }
 
 private fun PersonalDocumentationItemType.shortLabel(): String =
     when (this) {
@@ -4405,12 +4164,6 @@ private fun TorqueSpec.stableTorqueKey(): String =
         tighteningSpecifications.normalizeForTorqueKey(),
         torque.normalizeForTorqueKey()
     ).joinToString("|")
-
-private fun RepairDocumentation.belongsToRepair(repair: RepairProject): Boolean =
-    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
-
-private fun ShoppingListItem.belongsToRepair(repair: RepairProject): Boolean =
-    repairId == repair.id || (repairId.isBlank() && repairTitle == repair.title && area == repair.area)
 
 @Preview(showBackground = true, widthDp = 430)
 @Composable

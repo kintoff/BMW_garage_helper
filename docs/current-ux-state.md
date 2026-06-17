@@ -1,6 +1,6 @@
 # Aktualny stan UX
 
-Ostatnia aktualizacja: 2026-05-19
+Ostatnia aktualizacja: 2026-06-09
 
 Ten dokument zapisuje, gdzie skonczylismy prace nad przebudowa UI i co jest juz podpiete funkcjonalnie.
 
@@ -95,12 +95,26 @@ Zrobione:
 - dodawanie do magazynu z poziomu naprawy ma opcje skanowania etykiety,
 - przycisk `Dodaj czesc` pozwala wybrac dodanie do `Lista zakupow` albo bezposrednio do `Magazyn`.
 - usuniecie lub edycja rekordu w magazynie aktualizuje wspolny stan auta, wiec powiazane czesci znikaja tez z `Naprawy -> Czesci`.
+- ekran `Czesci` z dolnej nawigacji otwiera najpierw widok wyboru kafelkow, zamiast od razu przenosic do magazynu,
+- lista zakupow i magazyn dostaly bardziej kartowy, mobilny uklad,
+- edycja i dodawanie pozycji do listy zakupow oraz magazynu uzywa wyboru naprawy z aktywnych napraw zamiast wolnego tekstu,
+- karta pozycji zakupowej pokazuje tylko najwazniejsze dane: nazwe, OEM, kod producenta gdy rozny od OEM, ilosc i cene za sztuke,
+- w zakladce `Naprawa -> Czesci` dodano podsumowanie wartosci czesci dla naprawy,
+- stan ekranow czesci, listy zakupow, naprawy i dokumentacji jest zapamietywany po obrocie telefonu.
+
+Eksperyment:
+
+- dodano prototyp akcji Allegro pod dlugim przytrzymaniem pozycji z listy zakupow,
+- prototyp pozwala otworzyc wyszukiwanie po numerze OEM i wklei link oferty do testu,
+- automatyczne pobieranie ceny i zdjecia z Allegro nie zostalo domkniete, bo strona oferty jest blokowana lub zwraca dane w sposob niestabilny dla tego podejscia,
+- obecne podejscie traktujemy jako probe techniczna, a nie gotowa funkcje produkcyjna.
 
 Do dopracowania pozniej:
 
 - dodawanie czesci do listy zakupow bez przechodzenia do osobnego ekranu magazynu,
 - lepsze liczenie brakow, kiedy czesc ma rozne numery OEM i producenta.
-- dalsze dopieszczenie ikon wyboru po podpieciu docelowego zestawu ikon.
+- dalsze dopieszczenie ikon wyboru po podpieciu docelowego zestawu ikon,
+- wymyslic inny, stabilniejszy sposob porownywania cen z Allegro niz bezposredni odczyt danych z publicznej strony oferty.
 
 ## Naprawa - Dokumenty
 
@@ -178,5 +192,6 @@ Proponowana kolejnosc:
 1. Odpalic projekt po zainstalowaniu/ustawieniu Java Runtime.
 2. Sprawdzic galerie dokumentacji na fizycznym telefonie po dluzszym uzyciu: zoom, przesuwanie, powrot i ponowne otwarcie.
 3. Sprawdzic flow zakonczenia naprawy: magazyn, archiwalna lista zakupow i dokumentacja.
-4. Dopracowac sekcje `Dokumentacja ogolna` w `Dokumenty`.
-5. Potem przejsc do importu/edycji momentow w zakladce `Momenty`.
+4. Wymyslic inne podejscie do porownywania cen z Allegro, bez opierania sie na niestabilnym parsowaniu publicznej strony oferty.
+5. Dopracowac sekcje `Dokumentacja ogolna` w `Dokumenty`.
+6. Potem przejsc do importu/edycji momentow w zakladce `Momenty`.

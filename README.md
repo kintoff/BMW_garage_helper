@@ -82,6 +82,78 @@ W repo jest przygotowany workflow:
 
 - [.github/workflows/release-apk.yml](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/.github/workflows/release-apk.yml)
 
+## Testy regresyjne i CI
+
+W repo jest tez przygotowany osobny workflow testowy:
+
+- [.github/workflows/android-tests.yml](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/.github/workflows/android-tests.yml)
+
+Co uruchamia sie automatycznie:
+
+- przy `push`,
+- przy `pull_request`,
+- recznie z zakladki `Actions`.
+
+Zakres workflow w GitHub:
+
+- `:app:testDebugUnitTest` dla szybkich testow logiki.
+
+Aktualna strategia testow:
+
+- nowy feature powinien dostawac nowy test,
+- logika biznesowa i parsery trafiaja najpierw do szybkiej warstwy `JVM`,
+- `androidTest` zostaje dla realnych przeplywow UI, Room oraz import/export zaleznych od Androida,
+- procent pokrycia jest wskaznikiem pomocniczym, ale priorytetem jest ochrona krytycznych danych i scenariuszy uzytkownika.
+
+Najwazniejsze obszary pokryte testami:
+
+- reguly napraw, checkpointow, notatek i archiwizacji,
+- dokumentacja napraw, linki TIS, YouTube i `personalNotes`,
+- `torqueTables` oraz import/export dokumentacji,
+- shopping list, magazyn i przyjmowanie czesci,
+- parsery `Allegro` i `czescidobmw.pl`,
+- zgodnosc wsteczna danych i migracje legacy -> Room,
+- logika sprawdzania aktualizacji APK,
+- podstawowe przeplywy UI Compose na urzadzeniu.
+
+Pelne testy regresyjne odpalamy lokalnie na podlaczonym telefonie. To jest celowy wybor:
+
+- mniej problemow z emulatorami w CI,
+- bardziej realne srodowisko testowe,
+- prostszy workflow do nauki i codziennej pracy.
+
+Gotowe skrypty lokalne:
+
+- [scripts/run-unit-tests.sh](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/scripts/run-unit-tests.sh) uruchamia szybkie testy logiki,
+- [scripts/run-device-tests.sh](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/scripts/run-device-tests.sh) uruchamia testy Room i UI Compose na podlaczonym telefonie,
+- [scripts/run-local-regression.sh](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/scripts/run-local-regression.sh) odpala caly lokalny pakiet regresji.
+
+Najwygodniejszy wariant przed pushem:
+
+```bash
+./scripts/run-local-regression.sh
+```
+
+Albo osobno:
+
+```bash
+./scripts/run-unit-tests.sh
+./scripts/run-unit-tests.sh --coverage
+./scripts/run-device-tests.sh
+```
+
+Raport pokrycia po `--coverage` znajdziesz w:
+
+```bash
+app/build/reports/jacoco/jacocoDebugUnitTestReport/html/index.html
+```
+
+Skrypt testow na telefonie wymaga:
+
+- podlaczonego telefonu przez USB,
+- wlaczonego debugowania USB,
+- zaakceptowanego polaczenia ADB na telefonie.
+
 Przed pierwszym wydaniem ustaw w `GitHub -> Settings -> Secrets and variables -> Actions` sekrety:
 
 - `ANDROID_KEYSTORE_BASE64`
