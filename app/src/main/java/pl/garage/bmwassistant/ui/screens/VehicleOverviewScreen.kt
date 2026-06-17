@@ -95,6 +95,7 @@ fun VehicleOverviewScreen(
     var isQuickRepairActionOpen by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var initialShoppingRepairTitle by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
     var initialShoppingAreaName by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
+    var initialShoppingItemId by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
     var isDocumentationDetailsOpen by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var shouldReturnFromDocumentationToRepairs by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var shouldReturnFromShoppingToRepairs by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
@@ -567,6 +568,15 @@ fun VehicleOverviewScreen(
                 shouldReturnFromShoppingToRepairs = true
                 selectedModuleType = VehicleModuleType.PartsStorage
             },
+            onOpenShoppingListItem = { repair, item ->
+                initialShoppingRepairTitle = repair.title
+                initialShoppingAreaName = repair.area.name
+                initialShoppingItemId = item.stableId()
+                initialRepairListRepairId = repair.id
+                initialRepairListRepairTitle = repair.title
+                shouldReturnFromShoppingToRepairs = true
+                selectedModuleType = VehicleModuleType.PartsStorage
+            },
             onAddShoppingItems = { items ->
                 appendShoppingItems(items)
             },
@@ -627,6 +637,12 @@ fun VehicleOverviewScreen(
                 onOpenShoppingList = { repair ->
                     initialShoppingRepairTitle = repair.title
                     initialShoppingAreaName = repair.area.name
+                    selectedModuleType = VehicleModuleType.PartsStorage
+                },
+                onOpenShoppingListItem = { repair, item ->
+                    initialShoppingRepairTitle = repair.title
+                    initialShoppingAreaName = repair.area.name
+                    initialShoppingItemId = item.stableId()
                     selectedModuleType = VehicleModuleType.PartsStorage
                 },
                 onAddShoppingItems = {},
@@ -695,9 +711,11 @@ fun VehicleOverviewScreen(
             },
             initialShoppingRepairTitle = initialShoppingRepairTitle,
             initialShoppingArea = initialShoppingArea,
+            initialShoppingItemId = initialShoppingItemId,
             onInitialShoppingClosed = {
                 initialShoppingRepairTitle = null
                 initialShoppingAreaName = null
+                initialShoppingItemId = null
             },
             onInventoryUpdated = { parts ->
                 updateInventoryParts(parts)
@@ -710,10 +728,12 @@ fun VehicleOverviewScreen(
                     shouldReturnFromShoppingToRepairs = false
                     initialShoppingRepairTitle = null
                     initialShoppingAreaName = null
+                    initialShoppingItemId = null
                     selectedModuleType = VehicleModuleType.Repairs
                 } else {
                     initialShoppingRepairTitle = null
                     initialShoppingAreaName = null
+                    initialShoppingItemId = null
                     selectedModuleType = null
                 }
             },

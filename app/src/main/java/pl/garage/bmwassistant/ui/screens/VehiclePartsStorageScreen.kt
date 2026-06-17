@@ -8,13 +8,15 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.text.Html
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -41,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -50,6 +53,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -98,6 +103,14 @@ private val EditActionButtonContentColor = Color(0xFF7DC4FF)
 private val DeleteActionButtonColor = Color(0xFF34191C)
 private val DeleteActionButtonContentColor = Color(0xFFFF7A70)
 private val MetaSurfaceColor = Color(0xFF111E2C)
+private val ShoppingPartCardColor = Color(0xFF1A2332)
+private val ShoppingMarketRowColor = Color(0xFF1A2332)
+private val ShoppingPartnerCardColor = Color(0xFF1B2D22)
+private val ShoppingPartnerBorderColor = Color(0xFF2E5E3B)
+private val ShoppingAiCardStart = Color(0xFF2A1E3D)
+private val ShoppingAiCardEnd = Color(0xFF3B2370)
+private val ShoppingPrimaryTextColor = Color(0xFFE6ECF5)
+private val ShoppingSecondaryTextColor = Color(0xFFA6B0C3)
 
 @Composable
 fun VehiclePartsStorageScreen(
@@ -109,12 +122,14 @@ fun VehiclePartsStorageScreen(
     initialSection: PartsStorageSection? = null,
     initialShoppingRepairTitle: String? = null,
     initialShoppingArea: VehicleArea? = null,
+    initialShoppingItemId: String? = null,
     onInitialShoppingClosed: () -> Unit = {},
     onInventoryUpdated: (List<PartInventoryItem>) -> Unit = {},
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit = {},
     bottomBar: (@Composable BoxScope.() -> Unit)? = null,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
     var isAddingPart by remember { mutableStateOf(false) }
     var isAddingManualPart by remember { mutableStateOf(false) }
     var isExternalLookupVisible by remember { mutableStateOf(false) }
@@ -124,8 +139,8 @@ fun VehiclePartsStorageScreen(
     var shoppingItemPendingEdit by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingDeletion by remember { mutableStateOf<ShoppingListItem?>(null) }
     var shoppingItemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
-    var shoppingItemPendingAllegroActions by remember { mutableStateOf<ShoppingListItem?>(null) }
-    var shoppingItemPendingAllegroImport by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPendingAi by remember { mutableStateOf<ShoppingListItem?>(null) }
+    var shoppingItemPreview by remember { mutableStateOf<ShoppingListItem?>(null) }
     var selectedSectionName by rememberSaveable(vehicle.id, initialShoppingRepairTitle) {
         mutableStateOf(initialSection?.name)
     }
@@ -134,6 +149,12 @@ fun VehiclePartsStorageScreen(
     var storedShoppingList by remember(vehicle.id, shoppingList) { mutableStateOf(shoppingList) }
     val allInventoryParts = storedInventoryParts
     val allShoppingList = storedShoppingList
+
+    LaunchedEffect(initialShoppingItemId, selectedSectionName, allShoppingList) {
+        if (selectedSectionName == PartsStorageSection.Shopping.name && !initialShoppingItemId.isNullOrBlank()) {
+            shoppingItemPreview = allShoppingList.firstOrNull { it.stableId() == initialShoppingItemId }
+        }
+    }
 
     fun updateStoredParts(parts: List<PartInventoryItem>) {
         storedInventoryParts = parts
@@ -230,6 +251,8 @@ fun VehiclePartsStorageScreen(
             onConfirm = {
                 updateShoppingList(storedShoppingList.filterNot { it.stableId() == item.stableId() })
                 shoppingItemPendingDeletion = null
+                shoppingItemPreview = null
+                Toast.makeText(context, "Czesc zostala usunieta.", Toast.LENGTH_SHORT).show()
             },
             onDismiss = { shoppingItemPendingDeletion = null }
         )
@@ -270,34 +293,41 @@ fun VehiclePartsStorageScreen(
                 updateStoredParts(storedInventoryParts + item.toInventoryPart(nextPartId(storedInventoryParts)))
                 updateShoppingList(storedShoppingList.filterNot { it.stableId() == item.stableId() })
                 shoppingItemPendingReceive = null
+                shoppingItemPreview = null
+                Toast.makeText(context, "Czesc zostala przyjeta do magazynu.", Toast.LENGTH_SHORT).show()
             },
             onDismiss = { shoppingItemPendingReceive = null }
         )
     }
 
-    shoppingItemPendingAllegroActions?.let { item ->
-        ShoppingItemAllegroActionsDialog(
+    shoppingItemPreview?.let { item ->
+        ShoppingPartDetailsBottomSheet(
             item = item,
-            onDismiss = { shoppingItemPendingAllegroActions = null },
-            onOpenImport = {
-                shoppingItemPendingAllegroActions = null
-                shoppingItemPendingAllegroImport = item
+            onDismiss = { shoppingItemPreview = null },
+            onEditItem = {
+                shoppingItemPreview = null
+                shoppingItemPendingEdit = item
+            },
+            onDeleteItem = {
+                shoppingItemPreview = null
+                shoppingItemPendingDeletion = item
+            },
+            onReceiveItem = {
+                shoppingItemPreview = null
+                shoppingItemPendingReceive = item
+            },
+            onAskAi = {
+                shoppingItemPreview = null
+                shoppingItemPendingAi = item
             }
         )
     }
 
-    shoppingItemPendingAllegroImport?.let { item ->
-        ImportAllegroOfferDialog(
+    shoppingItemPendingAi?.let { item ->
+        AiPartAssistantBottomSheet(
             item = item,
-            onDismiss = { shoppingItemPendingAllegroImport = null },
-            onSave = { updatedItem ->
-                updateShoppingList(
-                    storedShoppingList.map {
-                        if (it.stableId() == item.stableId()) updatedItem else it
-                    }
-                )
-                shoppingItemPendingAllegroImport = null
-            }
+            vehicle = vehicle,
+            onDismiss = { shoppingItemPendingAi = null }
         )
     }
 
@@ -334,7 +364,9 @@ fun VehiclePartsStorageScreen(
                                 subtitle = vehicle.displayName.ifBlank { "Profil auta" }
                             )
                         }
-                        AddPartButton(onClick = { isAddingPart = true })
+                        if (selectedSection != PartsStorageSection.Shopping) {
+                            AddPartButton(onClick = { isAddingPart = true })
+                        }
                     }
                 }
 
@@ -377,12 +409,7 @@ fun VehiclePartsStorageScreen(
                                     shoppingList = allShoppingList,
                                     initialRepairTitle = initialShoppingRepairTitle,
                                     onAddShoppingItem = { isAddingShoppingItem = true },
-                                    onEditItem = { shoppingItemPendingEdit = it },
-                                    onDeleteItem = { shoppingItemPendingDeletion = it },
-                                    onReceiveItem = { item ->
-                                        shoppingItemPendingReceive = item
-                                    },
-                                    onAllegroAction = { shoppingItemPendingAllegroActions = it }
+                                    onOpenItemDetails = { shoppingItemPreview = it }
                                 )
                             }
                         }
@@ -491,6 +518,40 @@ private fun nextPartId(parts: List<PartInventoryItem>): String =
 
 private fun nextShoppingItemId(items: List<ShoppingListItem>): String =
     "shopping-${(items.mapNotNull { it.id.removePrefix("shopping-").toIntOrNull() }.maxOrNull() ?: 0) + 1}"
+
+private fun shoppingRepairCountLabel(count: Int): String = when {
+    count == 1 -> "naprawa"
+    count % 10 in 2..4 && count % 100 !in 12..14 -> "naprawy"
+    else -> "napraw"
+}
+
+private fun shoppingPartCountLabel(count: Int): String = when {
+    count == 1 -> "czesc"
+    count % 10 in 2..4 && count % 100 !in 12..14 -> "czesci"
+    else -> "czesci"
+}
+
+private fun shoppingRepairTotalLabel(items: List<ShoppingListItem>): String {
+    val prices = items.mapNotNull { item ->
+        item.price
+            .replace("PLN", "", ignoreCase = true)
+            .replace("zl", "", ignoreCase = true)
+            .replace(" ", "")
+            .replace(",", ".")
+            .toDoubleOrNull()
+    }
+    return if (prices.isEmpty()) {
+        "Cena do sprawdzenia"
+    } else {
+        String.format(Locale.US, "%.2f PLN", prices.sum()).replace(".", ",")
+    }
+}
+
+private fun List<ShoppingListItem>.shoppingPrimaryArea(): VehicleArea =
+    groupBy { it.area }
+        .maxByOrNull { (_, values) -> values.size }
+        ?.key
+        ?: VehicleArea.Service
 
 @Composable
 private fun PartsStorageTile(
@@ -1143,7 +1204,8 @@ private fun PartActionButton(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 10.dp),
+                .height(56.dp)
+                .padding(horizontal = 10.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1158,7 +1220,7 @@ private fun PartActionButton(
                 modifier = Modifier.padding(start = 8.dp),
                 color = contentColor,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp,
+                fontSize = 15.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Clip
             )
@@ -1235,10 +1297,7 @@ private fun ShoppingListSection(
     shoppingList: List<ShoppingListItem>,
     initialRepairTitle: String?,
     onAddShoppingItem: () -> Unit,
-    onEditItem: (ShoppingListItem) -> Unit,
-    onDeleteItem: (ShoppingListItem) -> Unit,
-    onReceiveItem: (ShoppingListItem) -> Unit,
-    onAllegroAction: (ShoppingListItem) -> Unit,
+    onOpenItemDetails: (ShoppingListItem) -> Unit,
 ) {
     var expandedRepairTitles by rememberSaveable(shoppingList, initialRepairTitle) {
         mutableStateOf(
@@ -1255,41 +1314,47 @@ private fun ShoppingListSection(
     } else {
         shoppingList.filter { it.repairTitle == initialRepairTitle }
     }
+    val groupedRepairs = visibleItems
+        .groupBy { it.repairTitle }
+        .toList()
+        .sortedBy { (repairTitle, _) -> repairTitle.lowercase(Locale.getDefault()) }
+    val repairCount = groupedRepairs.size
 
-    PartsSection(
-        title = initialRepairTitle?.let { "Lista zakupow: $it" } ?: "Lista zakupow do napraw",
-        subtitle = "Dodaj OEM, pobierz dostepne czesci ze sklepu, a po przyjeciu przenies pozycje do magazynu.",
-        countLabel = "${visibleItems.size} pozycji"
-    ) {
-        TextButton(onClick = onAddShoppingItem) {
-            Text("Dodaj czesc po OEM")
-        }
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        ShoppingListSummaryCard(
+            title = initialRepairTitle?.let { "Lista zakupow: $it" } ?: "Lista zakupow do napraw",
+            description = "Dobierz OEM u partnera, sprawdz rynek i popros AI o wsparcie przy decyzji.",
+            repairCount = repairCount,
+            partCount = visibleItems.size
+        )
+
         if (visibleItems.isEmpty()) {
             EmptyPartsRow("Brak czesci do kupienia.")
         } else {
-            visibleItems
-                .groupBy { it.repairTitle }
-                .toList()
-                .sortedBy { (repairTitle, _) -> repairTitle.lowercase(Locale.getDefault()) }
-                .forEach { (repairTitle, items) ->
-                    ExpandableRepairShoppingGroup(
-                        repairTitle = repairTitle,
-                        items = items,
-                        isExpanded = repairTitle in expandedRepairs,
-                        onToggle = {
-                            expandedRepairTitles = if (repairTitle in expandedRepairs) {
-                                expandedRepairTitles - repairTitle
-                            } else {
-                                expandedRepairTitles + repairTitle
-                            }
-                        },
-                        onEditItem = onEditItem,
-                        onDeleteItem = onDeleteItem,
-                        onReceiveItem = onReceiveItem,
-                        onAllegroAction = onAllegroAction
-                    )
-                }
+            Text(
+                text = "NAPRAWY",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFA6B0C3)
+            )
+            groupedRepairs.forEach { (repairTitle, items) ->
+                ExpandableRepairShoppingGroup(
+                    repairTitle = repairTitle,
+                    items = items,
+                    isExpanded = repairTitle in expandedRepairs,
+                    onToggle = {
+                        expandedRepairTitles = if (repairTitle in expandedRepairs) {
+                            expandedRepairTitles - repairTitle
+                        } else {
+                            expandedRepairTitles + repairTitle
+                        }
+                    },
+                    onOpenItemDetails = onOpenItemDetails,
+                )
+            }
         }
+
+        AddShoppingItemButton(onClick = onAddShoppingItem)
     }
 }
 
@@ -1299,22 +1364,19 @@ private fun ExpandableRepairShoppingGroup(
     items: List<ShoppingListItem>,
     isExpanded: Boolean,
     onToggle: () -> Unit,
-    onEditItem: (ShoppingListItem) -> Unit,
-    onDeleteItem: (ShoppingListItem) -> Unit,
-    onReceiveItem: (ShoppingListItem) -> Unit,
-    onAllegroAction: (ShoppingListItem) -> Unit,
+    onOpenItemDetails: (ShoppingListItem) -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.36f)
+            containerColor = Color(0xFF101A26)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier
@@ -1327,9 +1389,9 @@ private fun ExpandableRepairShoppingGroup(
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Image(
-                        painter = painterResource(items.primaryArea().iconResource()),
-                        contentDescription = items.primaryArea().label,
+                        Image(
+                        painter = painterResource(items.shoppingPrimaryArea().iconResource()),
+                        contentDescription = items.shoppingPrimaryArea().label,
                         modifier = Modifier
                             .padding(12.dp)
                             .height(28.dp)
@@ -1337,36 +1399,23 @@ private fun ExpandableRepairShoppingGroup(
                 }
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = repairTitle,
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold
                     )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SummaryBadge(
-                            label = "${items.size} pozycji",
-                            emphasized = false
-                        )
-                        SummaryBadge(
-                            label = shoppingTotalLabel(items),
-                            emphasized = true
-                        )
-                        items.areaSummaryLabel()?.let { label ->
-                            SummaryBadge(
-                                label = label,
-                                emphasized = false
-                            )
-                        }
-                    }
+                    Text(
+                        text = "${items.size} ${shoppingPartCountLabel(items.size)} • ${shoppingRepairTotalLabel(items)}",
+                        fontSize = 14.sp,
+                        color = Color(0xFFA6B0C3)
+                    )
                 }
                 Text(
-                    text = if (isExpanded) "Zwin" else "Rozwin",
-                    color = MaterialTheme.colorScheme.primary,
+                    text = if (isExpanded) "⌃" else "⌄",
+                    color = Color(0xFF63C8FF),
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -1374,10 +1423,7 @@ private fun ExpandableRepairShoppingGroup(
             if (isExpanded) {
                 ShoppingCardList(
                     items = items,
-                    onEditItem = onEditItem,
-                    onDeleteItem = onDeleteItem,
-                    onReceiveItem = onReceiveItem,
-                    onAllegroAction = onAllegroAction
+                    onOpenItemDetails = onOpenItemDetails,
                 )
             }
         }
@@ -1387,19 +1433,212 @@ private fun ExpandableRepairShoppingGroup(
 @Composable
 private fun ShoppingCardList(
     items: List<ShoppingListItem>,
-    onEditItem: (ShoppingListItem) -> Unit,
-    onDeleteItem: (ShoppingListItem) -> Unit,
-    onReceiveItem: (ShoppingListItem) -> Unit,
-    onAllegroAction: (ShoppingListItem) -> Unit,
+    onOpenItemDetails: (ShoppingListItem) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items.forEach { item ->
+            ShoppingListOverviewItemCard(
+                item = item,
+                onClick = { onOpenItemDetails(item) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShoppingListSummaryCard(
+    title: String,
+    description: String,
+    repairCount: Int,
+    partCount: Int,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color(0xFF121D29),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = Color(0xFF1D2938),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_search),
+                    contentDescription = null,
+                    tint = Color(0xFF88D6FF),
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = description,
+                    fontSize = 13.sp,
+                    color = Color(0xFFA6B0C3)
+                )
+                Text(
+                    text = "${repairCount} ${shoppingRepairCountLabel(repairCount)} • ${partCount} ${shoppingPartCountLabel(partCount)}",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF63C8FF)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShoppingListOverviewItemCard(
+    item: ShoppingListItem,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        color = Color(0xFF141F2C),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(64.dp),
+                color = Color(0xFF0F1723),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier.padding(6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    PartPhotoContent(
+                        photoUri = item.imageUri,
+                        height = 52.dp,
+                        contentScale = ContentScale.Fit
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = item.name,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "OEM: ${item.partNumber.ifBlank { "Do uzupelnienia" }}",
+                    fontSize = 13.sp,
+                    color = Color(0xFFA6B0C3)
+                )
+                Text(
+                    text = item.price.ifBlank { "Cena do sprawdzenia" },
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF63C8FF)
+                )
+            }
+
+            Text(
+                text = "›",
+                color = Color(0xFF63C8FF),
+                fontSize = 24.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddShoppingItemButton(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, Color(0xFF4FC8FF))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "+",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF4FC8FF)
+            )
+            Text(
+                text = "Dodaj czesc po OEM",
+                modifier = Modifier.padding(start = 10.dp),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF4FC8FF)
+            )
+        }
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ShoppingPartDetailsBottomSheet(
+    item: ShoppingListItem,
+    onDismiss: () -> Unit,
+    onEditItem: () -> Unit,
+    onDeleteItem: () -> Unit,
+    onReceiveItem: () -> Unit,
+    onAskAi: () -> Unit,
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFF0E1621),
+        dragHandle = null
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Szczegoly czesci",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ShoppingPrimaryTextColor
+            )
             ShoppingListItemCard(
                 item = item,
-                onEditItem = { onEditItem(item) },
-                onDeleteItem = { onDeleteItem(item) },
-                onReceiveItem = { onReceiveItem(item) },
-                onAllegroAction = { onAllegroAction(item) }
+                onEditItem = onEditItem,
+                onDeleteItem = onDeleteItem,
+                onReceiveItem = onReceiveItem,
+                onAskAi = onAskAi
             )
         }
     }
@@ -1411,89 +1650,133 @@ private fun ShoppingListItemCard(
     onEditItem: () -> Unit,
     onDeleteItem: () -> Unit,
     onReceiveItem: () -> Unit,
-    onAllegroAction: () -> Unit,
+    onAskAi: () -> Unit,
 ) {
-    val manufacturerCode = item.manufacturerPartNumber.trim()
-    val oemCode = item.partNumber.trim()
-    val shouldShowManufacturerCode =
-        manufacturerCode.isNotBlank() &&
-            manufacturerCode.lowercase(Locale.getDefault()) != oemCode.lowercase(Locale.getDefault())
+    val uriHandler = LocalUriHandler.current
+    val schematicUrl = item.realOemUrl?.takeIf { it.isNotBlank() }
+        ?: item.shopUrl?.takeIf { it.isNotBlank() }
+    var isDiagramPreviewOpen by remember(schematicUrl) { mutableStateOf(false) }
+
+    if (isDiagramPreviewOpen && schematicUrl != null) {
+        ShoppingDiagramPreviewDialog(
+            diagramPageUrl = schematicUrl,
+            onDismiss = { isDiagramPreviewOpen = false }
+        )
+    }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onAllegroAction
-            ),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f)),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0E1621)),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.Top
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = ShoppingPartCardColor,
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Surface(
-                    modifier = Modifier.size(108.dp),
-                    color = MaterialTheme.colorScheme.background.copy(alpha = 0.52f),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Box(modifier = Modifier.padding(6.dp)) {
-                        PartPhotoContent(
-                            photoUri = item.imageUri,
-                            height = 96.dp
-                        )
-                    }
-                }
-
                 Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text(
-                        text = item.name,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    InventoryMetaLine(
-                        label = "OEM",
-                        value = item.partNumber.ifBlank { "Do uzupelnienia" }
-                    )
-                    if (shouldShowManufacturerCode) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = manufacturerCode,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
+                            text = item.name,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ShoppingPrimaryTextColor
                         )
+                        Text(
+                            text = "OEM: ${item.partNumber.ifBlank { "Do uzupelnienia" }}",
+                            fontSize = 14.sp,
+                            color = ShoppingSecondaryTextColor
+                        )
+                        SummaryBadge(
+                            label = item.partnerCompatibilityLabel(),
+                            emphasized = true
+                        )
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                        color = Color(0xFF111926),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            PartPhotoContent(
+                                photoUri = item.imageUri,
+                                height = 156.dp,
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+                    }
+
+                    schematicUrl?.let {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isDiagramPreviewOpen = true },
+                            color = Color.Transparent,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFF3A8BFF))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .padding(horizontal = 14.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_search),
+                                    contentDescription = "Zobacz na schemacie",
+                                    tint = Color(0xFFE6F1FF),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Zobacz na schemacie",
+                                    modifier = Modifier.padding(start = 10.dp),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFFE6F1FF)
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                InventoryInfoPill(
-                    label = "Ilosc",
-                    value = "${item.quantity} szt."
-                )
-                InventoryInfoPill(
-                    label = "Cena za sztuke",
-                    value = item.price.ifBlank { "Cena do sprawdzenia" },
-                    emphasize = true
-                )
-            }
+            ShoppingPartnerSection(
+                item = item,
+                onOpenPartner = item.shopUrl
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { url -> { uriHandler.openUri(url) } }
+            )
+
+            MarketComparisonSection(
+                item = item,
+                onOpenSource = { source ->
+                    uriHandler.openUri(item.marketSearchUrlFor(source))
+                }
+            )
+
+            AiAssistantPromptCard(
+                onAskAi = onAskAi
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 PartActionButton(
                     label = "Przyjmij",
@@ -1525,182 +1808,883 @@ private fun ShoppingListItemCard(
 }
 
 @Composable
-private fun ShoppingItemAllegroActionsDialog(
-    item: ShoppingListItem,
+private fun ShoppingDiagramPreviewDialog(
+    diagramPageUrl: String,
     onDismiss: () -> Unit,
-    onOpenImport: () -> Unit,
 ) {
+    val imageUrl by produceState<String?>(initialValue = null, diagramPageUrl) {
+        value = withContext(Dispatchers.IO) {
+            resolveShoppingDiagramImageUrl(diagramPageUrl)
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Allegro dla pozycji") },
+        title = {
+            Text(
+                text = "Schemat czesci",
+                color = ShoppingPrimaryTextColor
+            )
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = item.name,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Przytrzymana pozycja moze pobrac cene i zdjecie z wklejonego linku Allegro.",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-                )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF111926),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                when (val resolvedImageUrl = imageUrl) {
+                    null -> {
+                        Text(
+                            text = "Laduje podglad schematu...",
+                            modifier = Modifier.padding(16.dp),
+                            color = ShoppingSecondaryTextColor
+                        )
+                    }
+
+                    "" -> {
+                        Text(
+                            text = "Nie udalo sie wczytac obrazu schematu dla tej czesci.",
+                            modifier = Modifier.padding(16.dp),
+                            color = ShoppingSecondaryTextColor
+                        )
+                    }
+
+                    else -> {
+                        PartPhotoContent(
+                            photoUri = resolvedImageUrl,
+                            height = 320.dp,
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = onOpenImport) {
-                Text("Wklej link Allegro")
-            }
-        },
-        dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Anuluj")
+                Text("Zamknij")
             }
         }
     )
 }
 
 @Composable
-private fun ImportAllegroOfferDialog(
+private fun ShoppingPartnerSection(
     item: ShoppingListItem,
-    onDismiss: () -> Unit,
-    onSave: (ShoppingListItem) -> Unit,
+    onOpenPartner: (() -> Unit)?,
 ) {
-    val uriHandler = LocalUriHandler.current
-    val coroutineScope = rememberCoroutineScope()
-    val suggestedQuery = remember(item) {
-        item.partNumber
-            .filter { it.isLetterOrDigit() }
-            .ifBlank { item.partNumber.trim() }
-    }
-    val suggestedSearchUrl = remember(suggestedQuery) { allegroSearchUrlFor(suggestedQuery) }
-    var offerUrl by remember(item) {
-        mutableStateOf(
-            item.shopUrl
-                ?.takeIf { it.isAllegroOfferUrl() }
-                .orEmpty()
-        )
-    }
-    var isLoading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var preview by remember { mutableStateOf<AllegroOfferDetails?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Import ceny z Allegro") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = ShoppingPartnerCardColor,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, ShoppingPartnerBorderColor)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
             ) {
-                Text(
-                    text = item.name,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "1. Otworz wyszukiwanie Allegro po numerze OEM. 2. Wybierz oferte. 3. Wklej link lub sam koniec adresu, a aplikacja sprobuje pobrac cene i zdjecie.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-                )
-                TextButton(onClick = { uriHandler.openUri(suggestedSearchUrl) }) {
-                    Text("Szukaj tej czesci na Allegro")
-                }
-                GarageTextField(
-                    value = offerUrl,
-                    onValueChange = {
-                        offerUrl = it
-                        errorMessage = null
-                        preview = null
-                    },
-                    label = "Link oferty Allegro",
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = "Wklej pelny link oferty Allegro"
-                )
-                TextButton(
-                    enabled = offerUrl.isNotBlank() && !isLoading,
-                    onClick = {
-                        coroutineScope.launch {
-                            isLoading = true
-                            errorMessage = null
-                            preview = null
-                            val result = runCatching {
-                                fetchAllegroOfferDetails(
-                                    inputUrl = offerUrl
-                                )
-                            }
-                            preview = result.getOrNull()
-                            if (preview == null) {
-                                errorMessage = result.exceptionOrNull()?.message
-                                    ?: "Nie udalo sie pobrac danych z Allegro. Sklep mogl zablokowac automatyczny odczyt tej oferty."
-                            }
-                            isLoading = false
-                        }
-                    }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(if (isLoading) "Pobieram..." else "Pobierz dane oferty")
-                }
-                errorMessage?.let { message ->
-                    EmptyPartsRow(message)
-                }
-                preview?.let { details ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            details.imageUrl?.let { imageUrl ->
-                                PartPhotoContent(
-                                    photoUri = imageUrl,
-                                    height = 130.dp,
-                                    contentScale = ContentScale.Fit
-                                )
-                            }
-                            Text(
-                                text = details.title,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            InventoryInfoPill(
-                                label = "Cena z Allegro",
-                                value = details.price,
-                                emphasize = true
-                            )
-                            Text(
-                                text = details.offerUrl,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = preview != null,
-                onClick = {
-                    val details = preview ?: return@TextButton
-                    onSave(
-                        item.copy(
-                            source = "allegro.pl",
-                            price = details.price,
-                            imageUri = details.imageUrl ?: item.imageUri,
-                            shopUrl = details.offerUrl
-                        )
+                    Text(
+                        text = "Sklep partnerski (OEM)",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ShoppingPrimaryTextColor
+                    )
+                    SummaryBadge(
+                        label = "Rekomendowany",
+                        emphasized = true
                     )
                 }
-            ) {
-                Text("Zapisz do pozycji")
+
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = item.price.ifBlank { "Cena do sprawdzenia" },
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ShoppingPrimaryTextColor
+                    )
+                    Text(
+                        text = "${item.quantity} szt.",
+                        fontSize = 12.sp,
+                        color = ShoppingSecondaryTextColor
+                    )
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Zamknij")
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                BenefitLabel(label = "Pewne dopasowanie")
+                BenefitLabel(label = "Schematy OEM")
+            }
+
+            onOpenPartner?.let { action ->
+                TextButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = action
+                ) {
+                    Text("Przejdz do oferty OEM")
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun BenefitLabel(label: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(18.dp),
+            color = Color(0xFF173724),
+            shape = RoundedCornerShape(999.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_check),
+                    contentDescription = null,
+                    tint = Color(0xFF9EF0A5),
+                    modifier = Modifier.size(10.dp)
+                )
+            }
+        }
+        Text(
+            text = label,
+            fontSize = 14.sp,
+            color = ShoppingPrimaryTextColor
+        )
+    }
+}
+
+@Composable
+private fun MarketComparisonSection(
+    item: ShoppingListItem,
+    onOpenSource: (MarketSearchSource) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Sprawdz rynek",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = ShoppingPrimaryTextColor
+        )
+        MarketSearchSource.entries.forEach { source ->
+            MarketSearchRow(
+                source = source,
+                item = item,
+                onClick = { onOpenSource(source) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MarketSearchRow(
+    source: MarketSearchSource,
+    item: ShoppingListItem,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clickable(onClick = onClick),
+        color = ShoppingMarketRowColor,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SourceBadge(source = source)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Text(
+                    text = "Szukaj w ${source.displayName}",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = ShoppingPrimaryTextColor
+                )
+                if (!item.hasKnownOemNumber()) {
+                    Text(
+                        text = "Uzyjemy nazwy i producenta",
+                        fontSize = 11.sp,
+                        color = ShoppingSecondaryTextColor
+                    )
+                }
+            }
+            Text(
+                text = ">",
+                color = Color(0xFFA6B0C3),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun SourceBadge(source: MarketSearchSource) {
+    val color = when (source) {
+        MarketSearchSource.Allegro -> Color(0xFFFF8A1E)
+        MarketSearchSource.Ceneo -> Color(0xFFFF6C1F)
+        MarketSearchSource.IParts -> Color(0xFFE44332)
+    }
+    Surface(
+        color = color,
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Text(
+            text = source.badgeLabel.uppercase(Locale.getDefault()),
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun AiAssistantPromptCard(
+    onAskAi: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFF6C4DFF).copy(alpha = 0.55f))
+    ) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(Brush.verticalGradient(listOf(ShoppingAiCardStart, ShoppingAiCardEnd)))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    modifier = Modifier.size(44.dp),
+                    color = Color.White.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(999.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_search),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Zapytaj AI",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ShoppingPrimaryTextColor
+                    )
+                    Text(
+                        text = "Znajdz alternatywy, porownaj ceny i uzyskaj rekomendacje od AI",
+                        fontSize = 13.sp,
+                        color = Color(0xFFE2D8FF)
+                    )
+                }
+            }
+
+            PartActionButton(
+                label = "Zapytaj AI o te czesc",
+                iconRes = R.drawable.ic_search,
+                containerColor = Color(0xFF6E42D9),
+                contentColor = Color(0xFFF6F0FF),
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onAskAi
+            )
+        }
+    }
+}
+
+private sealed interface AiAssistantUiState {
+    data object Loading : AiAssistantUiState
+    data object Empty : AiAssistantUiState
+    data class ConnectionError(val message: String) : AiAssistantUiState
+    data class Success(val response: AiPartComparisonResult) : AiAssistantUiState
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun AiPartAssistantBottomSheet(
+    item: ShoppingListItem,
+    vehicle: Vehicle,
+    onDismiss: () -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val assistant = remember { shoppingAssistantProvider() }
+    val request = remember(item, vehicle) { item.toAiComparisonRequest(vehicle) }
+    val uiState by produceState<AiAssistantUiState>(
+        initialValue = AiAssistantUiState.Loading,
+        key1 = item,
+        key2 = vehicle
+    ) {
+        value = runCatching { assistant.comparePart(request) }
+            .fold(
+                onSuccess = { AiAssistantUiState.Success(it) },
+                onFailure = { error ->
+                    when (error) {
+                        is AiAssistantRequestException -> AiAssistantUiState.ConnectionError(error.userMessage)
+                        else -> AiAssistantUiState.ConnectionError(
+                            "Nie udało się połączyć z asystentem AI.\nSprawdź konfigurację backendu."
+                        )
+                    }
+                }
+            )
+    }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                text = "Wyniki AI",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            AiAssistantResultContent(
+                item = item,
+                request = request,
+                response = (uiState as? AiAssistantUiState.Success)?.response,
+                connectionErrorMessage = (uiState as? AiAssistantUiState.ConnectionError)?.message,
+                isLoading = uiState is AiAssistantUiState.Loading,
+                onOpenOffer = { url -> uriHandler.openUri(url) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiAssistantResultContent(
+    item: ShoppingListItem,
+    request: AiPartComparisonRequest,
+    response: AiPartComparisonResult?,
+    connectionErrorMessage: String?,
+    isLoading: Boolean,
+    onOpenOffer: (String) -> Unit,
+) {
+    val noOffersMessage = "AI nie znalazło jeszcze ofert dla tej części."
+    val statusBanner = when {
+        isLoading -> "AI analizuje oferty..."
+        !connectionErrorMessage.isNullOrBlank() -> "Nie udało się połączyć z asystentem AI."
+        response?.offers?.isNotEmpty() == true -> "Znaleziono alternatywne oferty."
+        else -> noOffersMessage
+    }
+    val recommendationText = when {
+        isLoading -> "AI analizuje oferty..."
+        !connectionErrorMessage.isNullOrBlank() -> connectionErrorMessage
+        response == null -> "Brak rekomendacji"
+        response.offers.isEmpty() && response.recommendation.isBlank() -> noOffersMessage
+        response.recommendation.isBlank() -> "Brak rekomendacji"
+        else -> response.recommendation
+    }
+
+    AiQuerySummaryCard(
+        item = item,
+        request = request
+    )
+
+    AiStatusBanner(
+        text = statusBanner,
+        isLoading = isLoading,
+        isError = !connectionErrorMessage.isNullOrBlank(),
+        isSuccess = response?.offers?.isNotEmpty() == true
+    )
+
+    AiResultSectionCard(
+        title = "Oferty rynkowe",
+        accentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+    ) {
+        if (response?.offers?.isNotEmpty() == true) {
+            response.offers.forEach { offer ->
+                OfferSummaryRow(
+                    title = offer.source,
+                    subtitle = offer.note,
+                    price = formatCurrency(offer.price, offer.currency),
+                    highlight = null,
+                    onOpen = offer.url.takeIf { it.isNotBlank() }?.let { url -> { onOpenOffer(url) } }
+                )
+            }
+        } else {
+            AiPlaceholderState(
+                marker = "RYNEK",
+                title = "Brak znalezionych ofert.",
+                body = "Po podłączeniu AI tutaj pojawią się: Allegro, Ceneo, iParts i AUTODOC."
+            )
+        }
+    }
+
+    AiHighlightResultCard(
+        title = "Najtańsza oferta",
+        accentColor = Color(0xFF163B28),
+        titleColor = Color(0xFF8EF0AF)
+    ) {
+        val bestPrice = response?.bestPrice
+        if (bestPrice != null) {
+            Text(
+                text = bestPrice.source,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = formatCurrency(bestPrice.price),
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF9CF7B9)
+            )
+            response.saving?.amount
+                ?.takeIf { it > 0.0 }
+                ?.let {
+                    AiMetricPill(
+                        label = "Oszczędzasz",
+                        value = formatCurrency(it),
+                        accentColor = Color(0xFF8EF0AF)
+                    )
+                } ?: AiEmptyValue("Oczekiwanie na dane.")
+        } else {
+            AiPlaceholderState(
+                marker = "TANIEJ",
+                title = "Oczekiwanie na dane.",
+                body = "Tu pojawi się najtańsza oferta oraz oszczędność względem partnera OEM."
+            )
+        }
+    }
+
+    AiHighlightResultCard(
+        title = "Najbezpieczniejszy wybór",
+        accentColor = Color(0xFF132B44),
+        titleColor = Color(0xFF9FCEFF)
+    ) {
+        val safestChoice = response?.bestSafeChoice
+        if (safestChoice != null) {
+            Text(
+                text = safestChoice.source.ifBlank { "Brak danych" },
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = safestChoice.reason.ifBlank { "Brak danych" },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+            )
+        } else {
+            AiPlaceholderState(
+                marker = "PEWNIE",
+                title = "Oczekiwanie na rekomendację.",
+                body = "Tu pojawi się sklep, który AI uzna za najbezpieczniejszy wybór."
+            )
+        }
+    }
+
+    AiHighlightResultCard(
+        title = "Możliwe oszczędności",
+        accentColor = Color(0xFF163B28),
+        titleColor = Color(0xFF8EF0AF)
+    ) {
+        val saving = response?.saving
+        if (saving != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                AiMetricBlock(
+                    label = "Kwota",
+                    value = saving.amount.takeIf { it > 0.0 }?.let(::formatCurrency) ?: "Brak porównania cen.",
+                    accentColor = Color(0xFF8EF0AF),
+                    modifier = Modifier.weight(1f)
+                )
+                AiMetricBlock(
+                    label = "Procent",
+                    value = saving.percentage.takeIf { it > 0.0 }?.let(::formatPercentage) ?: "Brak porównania cen.",
+                    accentColor = Color(0xFF8EF0AF),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                AiMetricBlock(
+                    label = "Kwota",
+                    value = "Oczekiwanie na dane",
+                    accentColor = Color(0xFF8EF0AF),
+                    modifier = Modifier.weight(1f)
+                )
+                AiMetricBlock(
+                    label = "Procent",
+                    value = "Brak porównania cen.",
+                    accentColor = Color(0xFF8EF0AF),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color(0xFF24193C),
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Rekomendacja AI",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFE3D0FF)
+            )
+            Text(
+                text = if (
+                    recommendationText == "Brak rekomendacji" ||
+                    recommendationText == noOffersMessage
+                ) {
+                    "AI nie wygenerowało jeszcze rekomendacji."
+                } else {
+                    recommendationText
+                },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+                lineHeight = 22.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun OfferSummaryRow(
+    title: String,
+    subtitle: String,
+    price: String,
+    highlight: String?,
+    onOpen: (() -> Unit)?,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = title,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = subtitle,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+                Text(
+                    text = price,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            highlight?.let {
+                SummaryBadge(
+                    label = it,
+                    emphasized = true
+                )
+            }
+            onOpen?.let { action ->
+                TextButton(onClick = action) {
+                    Text("Otworz oferte")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiResultSectionCard(
+    title: String,
+    accentColor: Color = MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = accentColor,
+        shape = RoundedCornerShape(22.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = title,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun AiQuerySummaryCard(
+    item: ShoppingListItem,
+    request: AiPartComparisonRequest,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.46f),
+        shape = RoundedCornerShape(22.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            AiCompactSummaryValue("Część", item.name)
+            AiCompactSummaryValue("OEM", request.oem.ifBlank { "Brak danych" })
+            AiCompactSummaryValue("Auto", request.vehicle.orEmpty().ifBlank { "Brak danych" })
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Cena partnera OEM",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                )
+                Text(
+                    text = item.price.ifBlank { "Brak danych" },
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF8EF0AF)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiCompactSummaryValue(
+    label: String,
+    value: String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = "$label:",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+        )
+        Text(
+            text = value,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun AiStatusBanner(
+    text: String,
+    isLoading: Boolean,
+    isError: Boolean,
+    isSuccess: Boolean,
+) {
+    val containerColor = when {
+        isError -> Color(0xFF34191C)
+        isSuccess -> Color(0xFF163B28)
+        isLoading -> Color(0xFF132B44)
+        else -> MaterialTheme.colorScheme.background.copy(alpha = 0.52f)
+    }
+    val textColor = when {
+        isError -> Color(0xFFFFB4AB)
+        isSuccess -> Color(0xFF8EF0AF)
+        isLoading -> Color(0xFF9FCEFF)
+        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = containerColor,
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            color = textColor,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun AiHighlightResultCard(
+    title: String,
+    accentColor: Color,
+    titleColor: Color,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = accentColor,
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = title,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = titleColor
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun AiMetricBlock(
+    label: String,
+    value: String,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+        )
+        Text(
+            text = value,
+            color = accentColor,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 26.sp
+        )
+    }
+}
+
+@Composable
+private fun AiMetricPill(
+    label: String,
+    value: String,
+    accentColor: Color,
+) {
+    Surface(
+        color = accentColor.copy(alpha = 0.14f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = label,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+            )
+            Text(
+                text = value,
+                color = accentColor,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiPlaceholderState(
+    marker: String,
+    title: String,
+    body: String,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text(
+                text = marker,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Text(
+                text = title,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = body,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                lineHeight = 18.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiEmptyValue(text: String) {
+    Text(
+        text = text,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
     )
 }
 
@@ -2008,9 +2992,9 @@ private fun ConfirmDeleteShoppingItemDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Usun z listy zakupow") },
+        title = { Text("Usunac czesc z listy zakupow?") },
         text = {
-            Text("Czy usunac pozycje: ${item.name}?")
+            Text(item.name)
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
@@ -3067,6 +4051,44 @@ private fun allegroSearchUrlFor(query: String): String {
     val encoded = URLEncoder.encode(normalizedQuery, "UTF-8")
     return "https://allegro.pl/listing?string=$encoded"
 }
+
+private fun resolveShoppingDiagramImageUrl(url: String): String =
+    runCatching {
+        if (
+            url.contains("img.altechopersys.com", ignoreCase = true) ||
+            url.endsWith(".jpg", ignoreCase = true) ||
+            url.endsWith(".jpeg", ignoreCase = true) ||
+            url.endsWith(".png", ignoreCase = true) ||
+            url.endsWith(".webp", ignoreCase = true)
+        ) {
+            return@runCatching url
+        }
+
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 8_000
+            readTimeout = 8_000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "BmwGarageAssistant/0.1")
+        }
+        val html = (if (connection.responseCode >= 400) {
+            connection.errorStream ?: connection.inputStream
+        } else {
+            connection.inputStream
+        }).bufferedReader().use { it.readText() }
+
+        Regex(
+            pattern = "<img[^>]+src=\"([^\"]+)\"[^>]*>",
+            options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        ).findAll(html)
+            .mapNotNull { match -> match.groupValues.getOrNull(1) }
+            .map { decodeHtmlCompat(it) }
+            .firstOrNull { src ->
+                src.contains("img.altechopersys.com", ignoreCase = true) &&
+                    !src.endsWith(".svg", ignoreCase = true)
+            }
+            ?.let(::absoluteCzescidobmwUrl)
+            ?: ""
+    }.getOrDefault("")
 
 @Preview(showBackground = true, widthDp = 430)
 @Composable

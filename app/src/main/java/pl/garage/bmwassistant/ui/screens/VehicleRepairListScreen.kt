@@ -152,6 +152,7 @@ fun VehicleRepairListScreen(
     onOpenDocumentation: (RepairDocumentation) -> Unit,
     onDocumentationUpdated: (RepairDocumentation) -> Unit,
     onOpenShoppingList: (RepairProject) -> Unit,
+    onOpenShoppingListItem: (RepairProject, ShoppingListItem) -> Unit = { _, _ -> },
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
@@ -232,6 +233,7 @@ fun VehicleRepairListScreen(
             onOpenDocumentation = onOpenDocumentation,
             onDocumentationUpdated = onDocumentationUpdated,
             onOpenShoppingList = onOpenShoppingList,
+            onOpenShoppingListItem = onOpenShoppingListItem,
             onAddShoppingItems = onAddShoppingItems,
             onShoppingListUpdated = onShoppingListUpdated,
             onInventoryPartAdded = onInventoryPartAdded,
@@ -926,6 +928,7 @@ private fun RepairDetailsScreen(
     onOpenDocumentation: (RepairDocumentation) -> Unit,
     onDocumentationUpdated: (RepairDocumentation) -> Unit,
     onOpenShoppingList: (RepairProject) -> Unit,
+    onOpenShoppingListItem: (RepairProject, ShoppingListItem) -> Unit,
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
@@ -993,6 +996,7 @@ private fun RepairDetailsScreen(
                             allShoppingItems = allShoppingItems,
                             isArchivedMode = isArchivedMode,
                             onOpenShoppingList = { onOpenShoppingList(repair) },
+                            onOpenShoppingListItem = { item -> onOpenShoppingListItem(repair, item) },
                             onOpenCatalog = { isCatalogVisible = true },
                             onShoppingListUpdated = onShoppingListUpdated,
                             onInventoryPartAdded = onInventoryPartAdded
@@ -1261,6 +1265,7 @@ private fun RepairPartsTab(
     allShoppingItems: List<ShoppingListItem>,
     isArchivedMode: Boolean,
     onOpenShoppingList: () -> Unit,
+    onOpenShoppingListItem: (ShoppingListItem) -> Unit,
     onOpenCatalog: () -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
@@ -1344,7 +1349,8 @@ private fun RepairPartsTab(
                     ShoppingPartSummaryRow(
                         item = item,
                         isArchived = isArchivedMode,
-                        onReceive = if (isArchivedMode) null else ({ itemPendingReceive = item })
+                        onReceive = if (isArchivedMode) null else ({ itemPendingReceive = item }),
+                        onClick = if (isArchivedMode) null else ({ onOpenShoppingListItem(item) })
                     )
                 }
             }
@@ -1387,6 +1393,7 @@ private fun ShoppingPartSummaryRow(
     item: ShoppingListItem,
     isArchived: Boolean = false,
     onReceive: (() -> Unit)?,
+    onClick: (() -> Unit)? = null,
 ) {
     PartSummaryRow(
         title = item.name,
@@ -1396,7 +1403,8 @@ private fun ShoppingPartSummaryRow(
         badgeText = if (isArchived) "Historia" else "▣",
         badgeColor = AccentBlue,
         photoUri = item.imageUri,
-        onBadgeClick = onReceive
+        onBadgeClick = onReceive,
+        onClick = onClick
     )
 }
 
@@ -1426,10 +1434,12 @@ private fun PartSummaryRow(
     badgeColor: Color,
     photoUri: String? = null,
     onBadgeClick: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -4658,7 +4668,7 @@ private fun RealOemSchematicsDialog(
                     price = lookup.shopPrice,
                     imageUri = lookup.imageUrl,
                     shopUrl = lookup.shopUrl,
-                    realOemUrl = lookup.realOemUrl.ifBlank { diagram.url }
+                    realOemUrl = diagram.url
                 )
             )
         )
@@ -5672,6 +5682,7 @@ private fun VehicleRepairListScreenPreview() {
             onOpenDocumentation = {},
             onDocumentationUpdated = {},
             onOpenShoppingList = {},
+            onOpenShoppingListItem = { _, _ -> },
             onAddShoppingItems = {},
             onShoppingListUpdated = {},
             onInventoryPartAdded = {},

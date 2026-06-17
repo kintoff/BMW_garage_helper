@@ -148,6 +148,50 @@ Raport pokrycia po `--coverage` znajdziesz w:
 app/build/reports/jacoco/jacocoDebugUnitTestReport/html/index.html
 ```
 
+## Firebase AI Logic test
+
+W projekcie jest przygotowany proof of concept dla:
+
+Android App
+-> Firebase AI Logic
+-> Gemini
+-> Android UI
+
+Obecny backend AI zostaje w repo jako fallback.
+
+Domyslnie proof of concept Firebase jest uspiony:
+
+- bez `USE_FIREBASE_AI_LOGIC=true` aplikacja zostaje na backend fallback,
+- nawet przy wlaczonej fladze Firebase nie zostanie uzyte bez lokalnego `app/google-services.json`.
+
+Jak przelaczac providera AI:
+
+- `USE_FIREBASE_AI_LOGIC=true`:
+  aplikacja korzysta z Firebase AI Logic
+- `USE_FIREBASE_AI_LOGIC=false`:
+  aplikacja korzysta z istniejacego backendu `AI_ASSISTANT_BASE_URL`
+
+Do testu Firebase potrzebujesz prawdziwego pliku:
+
+- `app/google-services.json`
+
+W repo jest tylko szablon:
+
+- [app/google-services.json.example](/Users/izabelakoziol/Documents/Codex/2026-05-05/chce-rozpocz-c-projekt-aplikacji-dla/BmwGarageAssistant/app/google-services.json.example)
+
+Przyklady builda:
+
+```bash
+./gradlew assembleDebug -PUSE_FIREBASE_AI_LOGIC=true
+./gradlew assembleDebug -PUSE_FIREBASE_AI_LOGIC=false -PAI_ASSISTANT_BASE_URL=http://10.0.2.2:8000
+```
+
+Logi Androida dla obu wariantow filtruj po tagu:
+
+```text
+AI_ASSISTANT
+```
+
 Skrypt testow na telefonie wymaga:
 
 - podlaczonego telefonu przez USB,

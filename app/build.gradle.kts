@@ -25,6 +25,9 @@ fun Project.optionalConfig(name: String): String? =
 
 val releaseVersionCode = intConfig("APP_VERSION_CODE", 1)
 val releaseVersionName = stringConfig("APP_VERSION_NAME", "0.1.0")
+val aiAssistantBaseUrl = optionalConfig("AI_ASSISTANT_BASE_URL").orEmpty()
+val useFirebaseAiLogic = stringConfig("USE_FIREBASE_AI_LOGIC", "false").toBoolean()
+val hasFirebaseConfig = file("google-services.json").exists()
 val signingStoreFilePath = optionalConfig("ANDROID_SIGNING_STORE_FILE")
 val signingStorePassword = optionalConfig("ANDROID_SIGNING_STORE_PASSWORD")
 val signingKeyAlias = optionalConfig("ANDROID_SIGNING_KEY_ALIAS")
@@ -47,6 +50,9 @@ android {
         versionName = releaseVersionName
         buildConfigField("String", "UPDATE_REPO_OWNER", "\"kintoff\"")
         buildConfigField("String", "UPDATE_REPO_NAME", "\"BMW_garage_helper\"")
+        buildConfigField("String", "AI_ASSISTANT_BASE_URL", "\"$aiAssistantBaseUrl\"")
+        buildConfigField("boolean", "USE_FIREBASE_AI_LOGIC", useFirebaseAiLogic.toString())
+        buildConfigField("boolean", "HAS_FIREBASE_CONFIG", hasFirebaseConfig.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -108,11 +114,14 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.firebase.bom))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.firebase.ai)
+    implementation(libs.firebase.appcheck.playintegrity)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     implementation("com.google.mlkit:text-recognition:16.0.1")
@@ -126,6 +135,7 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    debugImplementation(libs.firebase.appcheck.debug)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.espresso.core)
@@ -196,4 +206,8 @@ tasks.register<JacocoReport>("jacocoDebugCombinedCoverageReport") {
             )
         }
     )
+}
+
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
