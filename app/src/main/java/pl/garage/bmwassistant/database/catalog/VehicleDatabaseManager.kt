@@ -2,8 +2,11 @@ package pl.garage.bmwassistant.database.catalog
 
 import android.content.Context
 import androidx.room.Room
-import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.database.vehicle.VehicleDatabase
+import pl.garage.bmwassistant.database.vehicle.VEHICLE_DATABASE_MIGRATION_1_2
+import pl.garage.bmwassistant.database.vehicle.VEHICLE_DATABASE_MIGRATION_2_3
+import pl.garage.bmwassistant.database.vehicle.VEHICLE_DATABASE_MIGRATION_3_4
+import pl.garage.bmwassistant.model.Vehicle
 import java.io.File
 import java.util.UUID
 
@@ -87,7 +90,13 @@ class VehicleDatabaseManager(
                 appContext,
                 VehicleDatabase::class.java,
                 descriptor.databaseFile.absolutePath
-            ).build()
+            )
+                .addMigrations(
+                    VEHICLE_DATABASE_MIGRATION_1_2,
+                    VEHICLE_DATABASE_MIGRATION_2_3,
+                    VEHICLE_DATABASE_MIGRATION_3_4
+                )
+                .build()
         }
     }
 

@@ -1,0 +1,23 @@
+{
+  "project_info": {
+    "project_number": "123456789012",
+    "project_id": "replace-with-your-firebase-project-id",
+    "storage_bucket": "replace-with-your-firebase-project-id.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:123456789012:android:replace_me",
+        "android_client_info": {
+          "package_name": "pl.garage.bmwassistant"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "replace_me"
+        }
+      ]
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -13,8 +13,6 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import pl.garage.bmwassistant.database.migration.LegacyStorageRoomMigrator
-import pl.garage.bmwassistant.database.repository.GarageRepository
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.ui.screens.AddVehicleWizard
 import pl.garage.bmwassistant.ui.screens.DeleteVehicleDialog
@@ -26,8 +24,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 fun GarageApp() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val garageRepository = remember { GarageRepository(context.applicationContext) }
-    val roomMigrator = remember { LegacyStorageRoomMigrator(context.applicationContext) }
+    val appContainer = remember(context) { context.appContainer }
+    val garageRepository = appContainer.garageRepository
+    val roomMigrator = appContainer.legacyStorageRoomMigrator
     val vehicles = remember { mutableStateListOf<Vehicle>() }
     var isAddingVehicle by rememberSaveable { mutableStateOf(false) }
     var selectedVehicleId by rememberSaveable { mutableStateOf<String?>(null) }

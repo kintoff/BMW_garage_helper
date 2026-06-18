@@ -46,9 +46,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import pl.garage.bmwassistant.appContainer
 import pl.garage.bmwassistant.data.ImportedRepairArchive
 import pl.garage.bmwassistant.data.sampleConsumablesFor
-import pl.garage.bmwassistant.database.repository.GarageRepository
 import pl.garage.bmwassistant.database.repository.VehicleDataSnapshot
 import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.RepairDocumentation
@@ -71,6 +71,7 @@ import pl.garage.bmwassistant.ui.components.MetricBlock
 import pl.garage.bmwassistant.ui.components.SectionTitle
 import pl.garage.bmwassistant.ui.components.StatusBadge
 import pl.garage.bmwassistant.ui.components.detailImageResource
+import pl.garage.bmwassistant.ui.components.garageBottomContentPadding
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,7 +86,7 @@ fun VehicleOverviewScreen(
     val currentVehicle = vehicle ?: return
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val garageRepository = remember { GarageRepository(context.applicationContext) }
+    val garageRepository = remember(context) { context.appContainer.garageRepository }
     var selectedModuleType by rememberSaveable(currentVehicle.id) { mutableStateOf<VehicleModuleType?>(null) }
     var isEditingVehicle by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var initialDocumentationRepairTitle by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
@@ -95,6 +96,7 @@ fun VehicleOverviewScreen(
     var isQuickRepairActionOpen by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var initialShoppingRepairTitle by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
     var initialShoppingAreaName by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
+    var initialShoppingItemId by rememberSaveable(currentVehicle.id) { mutableStateOf<String?>(null) }
     var isDocumentationDetailsOpen by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var shouldReturnFromDocumentationToRepairs by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
     var shouldReturnFromShoppingToRepairs by rememberSaveable(currentVehicle.id) { mutableStateOf(false) }
@@ -187,9 +189,34 @@ fun VehicleOverviewScreen(
         persistVehicleSnapshot(inventoryParts = updatedParts)
     }
 
+    fun appendInventoryPartAndUpdateShopping(
+        part: PartInventoryItem,
+        items: List<ShoppingListItem>,
+    ) {
+        val updatedParts = inventoryPartItems + part
+        inventoryPartItems = updatedParts
+        shoppingListItems = items
+        persistVehicleSnapshot(
+            inventoryParts = updatedParts,
+            shoppingItems = items
+        )
+    }
+
     fun updateInventoryParts(parts: List<PartInventoryItem>) {
         inventoryPartItems = parts
         persistVehicleSnapshot(inventoryParts = parts)
+    }
+
+    fun updateInventoryAndShopping(
+        parts: List<PartInventoryItem>,
+        items: List<ShoppingListItem>,
+    ) {
+        inventoryPartItems = parts
+        shoppingListItems = items
+        persistVehicleSnapshot(
+            inventoryParts = parts,
+            shoppingItems = items
+        )
     }
 
     fun startRepairExport(repair: RepairProject) {
@@ -567,6 +594,15 @@ fun VehicleOverviewScreen(
                 shouldReturnFromShoppingToRepairs = true
                 selectedModuleType = VehicleModuleType.PartsStorage
             },
+            onOpenShoppingListItem = { repair, item ->
+                initialShoppingRepairTitle = repair.title
+                initialShoppingAreaName = repair.area.name
+                initialShoppingItemId = item.stableId()
+                initialRepairListRepairId = repair.id
+                initialRepairListRepairTitle = repair.title
+                shouldReturnFromShoppingToRepairs = true
+                selectedModuleType = VehicleModuleType.PartsStorage
+            },
             onAddShoppingItems = { items ->
                 appendShoppingItems(items)
             },
@@ -575,6 +611,9 @@ fun VehicleOverviewScreen(
             },
             onInventoryPartAdded = { part ->
                 appendInventoryPart(part)
+            },
+            onInventoryPartAddedAndShoppingListUpdated = { part, items ->
+                appendInventoryPartAndUpdateShopping(part, items)
             },
             onExportRepair = { repair ->
                 startRepairExport(repair)
@@ -627,6 +666,12 @@ fun VehicleOverviewScreen(
                 onOpenShoppingList = { repair ->
                     initialShoppingRepairTitle = repair.title
                     initialShoppingAreaName = repair.area.name
+                    selectedModuleType = VehicleModuleType.PartsStorage
+                },
+                onOpenShoppingListItem = { repair, item ->
+                    initialShoppingRepairTitle = repair.title
+                    initialShoppingAreaName = repair.area.name
+                    initialShoppingItemId = item.stableId()
                     selectedModuleType = VehicleModuleType.PartsStorage
                 },
                 onAddShoppingItems = {},
@@ -695,9 +740,11 @@ fun VehicleOverviewScreen(
             },
             initialShoppingRepairTitle = initialShoppingRepairTitle,
             initialShoppingArea = initialShoppingArea,
+            initialShoppingItemId = initialShoppingItemId,
             onInitialShoppingClosed = {
                 initialShoppingRepairTitle = null
                 initialShoppingAreaName = null
+                initialShoppingItemId = null
             },
             onInventoryUpdated = { parts ->
                 updateInventoryParts(parts)
@@ -705,15 +752,20 @@ fun VehicleOverviewScreen(
             onShoppingListUpdated = { items ->
                 updateShoppingItems(items)
             },
+            onInventoryAndShoppingUpdated = { parts, items ->
+                updateInventoryAndShopping(parts, items)
+            },
             onBack = {
                 if (shouldReturnFromShoppingToRepairs) {
                     shouldReturnFromShoppingToRepairs = false
                     initialShoppingRepairTitle = null
                     initialShoppingAreaName = null
+                    initialShoppingItemId = null
                     selectedModuleType = VehicleModuleType.Repairs
                 } else {
                     initialShoppingRepairTitle = null
                     initialShoppingAreaName = null
+                    initialShoppingItemId = null
                     selectedModuleType = null
                 }
             },
@@ -746,7 +798,12 @@ fun VehicleOverviewScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 96.dp),
+                contentPadding = PaddingValues(
+                    start = 18.dp,
+                    top = 18.dp,
+                    end = 18.dp,
+                    bottom = garageBottomContentPadding(hasBottomBar = true)
+                ),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 item {

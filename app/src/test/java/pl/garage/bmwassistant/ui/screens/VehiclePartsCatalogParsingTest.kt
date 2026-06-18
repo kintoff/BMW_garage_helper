@@ -23,6 +23,7 @@ class VehiclePartsCatalogParsingTest {
             };
             </script>
             <div class="c-product__panel" data-article-code="33326763092">
+              <a class="c-product__name" href="/produkt/tuleja-wahacza-tylnego-33326763092">Produkt</a>
               <a class="c-product-image__link" href="/images/tuleja.jpg"></a>
             </div>
             <div id="hook_seodescriptionbottomhook"></div>
@@ -40,6 +41,7 @@ class VehiclePartsCatalogParsingTest {
         assertEquals("Tuleja wahacza tylnego", item.name)
         assertEquals("Lemforder", item.manufacturer)
         assertEquals("249,99 PLN".replace(',', '.'), item.shopPrice.replace(',', '.'))
+        assertEquals("https://czescidobmw.pl/produkt/tuleja-wahacza-tylnego-33326763092", item.shopUrl)
         assertEquals("https://czescidobmw.pl/images/tuleja.jpg", item.imageUrl)
     }
 

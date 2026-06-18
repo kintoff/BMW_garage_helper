@@ -12,6 +12,10 @@ data class PartInventoryItem(
     val realOemUrl: String?,
     val photoUri: String? = null,
     val repairId: String? = null,
+    val originShoppingItemId: String? = null,
+    val locationNote: String = "",
+    val createdAtEpochMillis: Long = 0L,
+    val updatedAtEpochMillis: Long = 0L,
 ) {
     val partNumber: String
         get() = oemPartNumber.ifBlank { manufacturerPartNumber }

@@ -14,8 +14,9 @@ fun ShoppingListItem.stableId(): String =
 fun ShoppingListItem.toInventoryPart(
     nextId: String,
     receivedQuantity: Int = quantity,
-): PartInventoryItem =
-    PartInventoryItem(
+): PartInventoryItem {
+    val now = System.currentTimeMillis()
+    return PartInventoryItem(
         id = nextId,
         oemPartNumber = partNumber.ifBlank { "do uzupelnienia" },
         manufacturerPartNumber = manufacturerPartNumber.ifBlank { partNumber.ifBlank { "do uzupelnienia" } },
@@ -26,8 +27,12 @@ fun ShoppingListItem.toInventoryPart(
         purchasePrice = price.ifBlank { "do uzupelnienia" },
         realOemUrl = realOemUrl,
         photoUri = imageUri,
-        repairId = repairId.ifBlank { null }
+        repairId = repairId.ifBlank { null },
+        originShoppingItemId = stableId(),
+        createdAtEpochMillis = now,
+        updatedAtEpochMillis = now
     )
+}
 
 internal fun List<ShoppingListItem>.primaryArea(): VehicleArea =
     groupBy { it.area }
@@ -46,8 +51,7 @@ internal fun List<ShoppingListItem>.areaSummaryLabel(): String? {
 
 internal fun shoppingTotalLabel(items: List<ShoppingListItem>): String {
     val total = items.sumOf { item ->
-        val price = parsePriceAmount(item.price) ?: 0.0
-        price * item.quantity
+        item.totalPriceAmount()
     }
     return if (total > 0.0) {
         "Wartosc: ${"%.2f".format(Locale.US, total).replace('.', ',')} PLN"
@@ -55,6 +59,38 @@ internal fun shoppingTotalLabel(items: List<ShoppingListItem>): String {
         "Wartosc do uzupelnienia"
     }
 }
+
+internal fun ShoppingListItem.totalPriceAmount(): Double {
+    val unitPrice = parsePriceAmount(price) ?: return 0.0
+    return unitPrice * quantity.coerceAtLeast(0)
+}
+
+internal fun ShoppingListItem.totalPriceLabel(): String =
+    totalPriceAmount()
+        .takeIf { it > 0.0 }
+        ?.let { "${"%.2f".format(Locale.US, it).replace('.', ',')} PLN" }
+        ?: price.ifBlank { "Cena do sprawdzenia" }
+
+internal fun ShoppingListItem.unitPriceInfoLabel(): String? =
+    price
+        .takeIf { quantity > 1 && parsePriceAmount(it) != null }
+        ?.let { "$it / szt." }
+
+internal fun PartInventoryItem.totalPurchasePriceAmount(): Double {
+    val unitPrice = parsePriceAmount(purchasePrice) ?: return 0.0
+    return unitPrice * quantity.coerceAtLeast(0)
+}
+
+internal fun PartInventoryItem.totalPurchasePriceLabel(): String =
+    totalPurchasePriceAmount()
+        .takeIf { it > 0.0 }
+        ?.let { "${"%.2f".format(Locale.US, it).replace('.', ',')} PLN" }
+        ?: purchasePrice.ifBlank { "Do uzupełnienia" }
+
+internal fun PartInventoryItem.unitPurchasePriceInfoLabel(): String? =
+    purchasePrice
+        .takeIf { quantity > 1 && parsePriceAmount(it) != null }
+        ?.let { "$it / szt." }
 
 internal fun List<ShoppingListItem>.afterReceiving(
     receivedItem: ShoppingListItem,

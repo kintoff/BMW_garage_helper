@@ -58,7 +58,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import pl.garage.bmwassistant.database.repository.GarageRepository
+import pl.garage.bmwassistant.appContainer
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.update.AppUpdateCheckResult
 import pl.garage.bmwassistant.update.AppUpdateManager
@@ -80,7 +80,7 @@ fun GarageDashboard(
     var vehicleWithOpenOptions by remember { mutableStateOf<Vehicle?>(null) }
     val context = LocalContext.current
     val updateManager = remember { AppUpdateManager(context.applicationContext) }
-    val garageRepository = remember { GarageRepository(context.applicationContext) }
+    val garageRepository = remember(context) { context.appContainer.garageRepository }
     val coroutineScope = rememberCoroutineScope()
     val isInPreview = LocalInspectionMode.current
     var backupMessage by remember { mutableStateOf<String?>(null) }

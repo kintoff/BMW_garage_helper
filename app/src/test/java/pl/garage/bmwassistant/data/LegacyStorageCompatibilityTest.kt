@@ -67,6 +67,31 @@ class LegacyStorageCompatibilityTest {
     }
 
     @Test
+    fun inventoryJsonPreservesStorageMetadata() {
+        val vehicle = sampleVehicle()
+        val restored = JSONObject()
+            .put("id", "part_1")
+            .put("oemPartNumber", "11428575211")
+            .put("manufacturerPartNumber", "MANN-HU816X")
+            .put("name", "Filtr oleju")
+            .put("manufacturer", "Mann")
+            .put("repairTitle", "Wymiana filtra oleju")
+            .put("repairId", "repair_filter")
+            .put("quantity", 1)
+            .put("purchasePrice", "42.50")
+            .put("originShoppingItemId", "shopping_1")
+            .put("locationNote", "Regał A / Półka 3")
+            .put("createdAtEpochMillis", 100L)
+            .put("updatedAtEpochMillis", 200L)
+            .toPartInventoryItem(vehicle)
+
+        assertEquals("shopping_1", restored.originShoppingItemId)
+        assertEquals("Regał A / Półka 3", restored.locationNote)
+        assertEquals(100L, restored.createdAtEpochMillis)
+        assertEquals(200L, restored.updatedAtEpochMillis)
+    }
+
+    @Test
     fun shoppingJsonFallsBackToServiceAreaAndStableRepairId() {
         val vehicle = sampleVehicle()
         val restored = JSONObject()

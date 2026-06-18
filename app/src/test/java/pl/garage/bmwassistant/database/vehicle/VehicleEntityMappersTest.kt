@@ -121,7 +121,11 @@ class VehicleEntityMappersTest {
             purchasePrice = "42.50",
             realOemUrl = "https://example.com/oem/11428575211",
             photoUri = "content://photo/filter",
-            repairId = "repair_filter"
+            repairId = "repair_filter",
+            originShoppingItemId = "shopping_1",
+            locationNote = "Polka A",
+            createdAtEpochMillis = 100L,
+            updatedAtEpochMillis = 200L
         )
 
         val entity = part.toEntity(
@@ -131,9 +135,18 @@ class VehicleEntityMappersTest {
             locationNote = "Polka A"
         )
         val restored = entity.toModel(repairTitle = part.repairTitle)
+        val historyEvent = entity.initialHistoryEvent()
 
         assertEquals("shopping_1", entity.originShoppingItemId)
         assertEquals("Polka A", entity.locationNote)
+        assertEquals("${part.id}_created", historyEvent.eventId)
+        assertEquals(part.id, historyEvent.inventoryPartId)
+        assertEquals(INVENTORY_HISTORY_ACCEPTED_FROM_SHOPPING, historyEvent.eventType)
+        assertEquals("Przyjęto do magazynu", historyEvent.title)
+        assertEquals(1, historyEvent.quantityDelta)
+        assertEquals(1, historyEvent.quantityAfter)
+        assertEquals("Lokalizacja: Polka A", historyEvent.note)
+        assertEquals(100L, historyEvent.createdAtEpochMillis)
         assertEquals(part, restored)
     }
 

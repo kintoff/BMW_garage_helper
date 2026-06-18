@@ -14,6 +14,9 @@ interface InventoryPartDao {
     @Query("SELECT * FROM inventory_parts WHERE repairId = :repairId ORDER BY updatedAtEpochMillis DESC")
     suspend fun getPartsForRepair(repairId: String): List<InventoryPartEntity>
 
+    @Query("SELECT * FROM inventory_parts WHERE inventoryPartId = :inventoryPartId LIMIT 1")
+    suspend fun getPartById(inventoryPartId: String): InventoryPartEntity?
+
     @Query("DELETE FROM inventory_parts")
     suspend fun clearAll()
 

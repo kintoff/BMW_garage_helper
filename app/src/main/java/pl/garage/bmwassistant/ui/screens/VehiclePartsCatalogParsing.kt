@@ -16,6 +16,7 @@ internal fun parseCzescidobmwResults(
 
     val items = JSONObject(analyticsJson).optJSONArray("items") ?: return emptyList()
     val imageUrlsByArticleCode = productImageUrlsByArticleCode(html)
+    val productUrlsByArticleCode = productPageUrlsByArticleCode(html)
     return buildList {
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
@@ -42,12 +43,41 @@ internal fun parseCzescidobmwResults(
                     shopPrice = priceLabel,
                     diagram = "do uzupelnienia z RealOEM",
                     realOemUrl = "https://www.realoem.com/bmw/partxref?q=$itemId",
-                    shopUrl = searchUrl,
+                    shopUrl = productUrlsByArticleCode[itemId] ?: searchUrl,
                     imageSource = if (imageUrl == null) "brak zdjecia w czescidobmw.pl" else "czescidobmw.pl",
                     imageUrl = imageUrl,
                     imageSearchUrl = imageSearchUrlFor(itemId, brand)
                 )
             )
+        }
+    }
+}
+
+internal fun productPageUrlsByArticleCode(html: String): Map<String, String> {
+    val productPanels = Regex(
+        pattern = "<div class=\"c-product__panel[\\s\\S]*?(?=<div class=\"c-product__panel|<div id=\"hook_seodescriptionbottomhook)",
+    ).findAll(html)
+
+    return buildMap {
+        productPanels.forEach { panelMatch ->
+            val panel = panelMatch.value
+            val articleCode = Regex("data-article-code=\"([^\"]+)\"")
+                .find(panel)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.let(::decodeHtmlCompat)
+                ?: return@forEach
+
+            val productUrl = Regex("href=\"([^\"]+)\"")
+                .findAll(panel)
+                .mapNotNull { match -> match.groupValues.getOrNull(1) }
+                .map(::decodeHtmlCompat)
+                .map(::absoluteCzescidobmwUrl)
+                .firstOrNull { url -> url.isLikelyCzescidobmwProductUrl() }
+
+            if (!productUrl.isNullOrBlank()) {
+                put(articleCode, productUrl)
+            }
         }
     }
 }
@@ -91,6 +121,18 @@ internal fun absoluteCzescidobmwUrl(url: String): String =
         url.startsWith("/") -> "https://czescidobmw.pl$url"
         else -> "https://czescidobmw.pl/$url"
     }.replace("&amp;", "&")
+
+internal fun String.isLikelyCzescidobmwProductUrl(): Boolean {
+    val normalized = lowercase(Locale.ROOT)
+    return normalized.contains("czescidobmw.pl") &&
+        !normalized.contains("/wyniki-wyszukiwania") &&
+        !normalized.contains("/szukaj") &&
+        !normalized.endsWith(".jpg") &&
+        !normalized.endsWith(".jpeg") &&
+        !normalized.endsWith(".png") &&
+        !normalized.endsWith(".svg") &&
+        !normalized.endsWith(".webp")
+}
 
 internal fun imageSearchUrlFor(
     partNumber: String,

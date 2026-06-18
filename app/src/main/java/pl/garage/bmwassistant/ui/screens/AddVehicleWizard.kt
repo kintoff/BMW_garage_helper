@@ -43,7 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.garage.bmwassistant.R
-import pl.garage.bmwassistant.database.repository.GarageRepository
+import pl.garage.bmwassistant.appContainer
 import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.ui.components.GarageTextField
 import pl.garage.bmwassistant.ui.components.Header
@@ -67,7 +67,7 @@ fun AddVehicleWizard(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val garageRepository = remember { GarageRepository(context.applicationContext) }
+    val garageRepository = remember(context) { context.appContainer.garageRepository }
     var brand by rememberSaveable { mutableStateOf(initialVehicle?.brand ?: "BMW") }
     var model by rememberSaveable { mutableStateOf(initialVehicle?.model.orEmpty()) }
     var generation by rememberSaveable { mutableStateOf(initialVehicle?.generation.orEmpty()) }

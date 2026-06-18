@@ -1,7 +1,11 @@
 *.iml
 .DS_Store
 .gradle
+.gradle-local/
+.gradle-local-review/
+.android-local/
 .gradle-user-home/
+$PWD/
 .kotlin/
 /local.properties
 /.idea/caches
@@ -16,3 +20,4 @@
 .externalNativeBuild
 .cxx
 local.properties
+/app/google-services.json

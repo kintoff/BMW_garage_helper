@@ -53,6 +53,9 @@ class VehiclePartsShoppingRulesTest {
         assertEquals(1, inventory.quantity)
         assertEquals("do uzupelnienia", inventory.purchasePrice)
         assertEquals("do uzupelnienia", inventory.manufacturer)
+        assertEquals("shopping_1", inventory.originShoppingItemId)
+        assertTrue(inventory.createdAtEpochMillis > 0L)
+        assertTrue(inventory.updatedAtEpochMillis > 0L)
     }
 
     @Test
@@ -123,6 +126,35 @@ class VehiclePartsShoppingRulesTest {
             "Wartosc do uzupelnienia",
             shoppingTotalLabel(listOf(shoppingItem(price = "brak")))
         )
+    }
+
+    @Test
+    fun shoppingItemPriceLabelsShowTotalAndUnitPriceForMultiplePieces() {
+        val item = shoppingItem(quantity = 3, price = "12,50 PLN")
+
+        assertEquals(37.50, item.totalPriceAmount(), 0.001)
+        assertEquals("37,50 PLN", item.totalPriceLabel())
+        assertEquals("12,50 PLN / szt.", item.unitPriceInfoLabel())
+    }
+
+    @Test
+    fun inventoryPriceLabelsShowTotalAndUnitPriceForMultiplePieces() {
+        val item = PartInventoryItem(
+            id = "inventory_1",
+            oemPartNumber = "33326763092",
+            manufacturerPartNumber = "LEM-123",
+            name = "Tuleja wahacza",
+            manufacturer = "Lemforder",
+            repairTitle = "Tylna zwrotnica lewa",
+            quantity = 2,
+            purchasePrice = "249,99 PLN",
+            realOemUrl = null,
+            repairId = "repair_rear_knuckle"
+        )
+
+        assertEquals(499.98, item.totalPurchasePriceAmount(), 0.001)
+        assertEquals("499,98 PLN", item.totalPurchasePriceLabel())
+        assertEquals("249,99 PLN / szt.", item.unitPurchasePriceInfoLabel())
     }
 
     @Test
