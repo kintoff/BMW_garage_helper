@@ -14,12 +14,6 @@ import pl.garage.bmwassistant.model.PartInventoryItem
             parentColumns = ["repairId"],
             childColumns = ["repairId"],
             onDelete = ForeignKey.SET_NULL
-        ),
-        ForeignKey(
-            entity = ShoppingListItemEntity::class,
-            parentColumns = ["shoppingItemId"],
-            childColumns = ["originShoppingItemId"],
-            onDelete = ForeignKey.SET_NULL
         )
     ],
     indices = [Index("repairId"), Index("originShoppingItemId")]
@@ -53,7 +47,11 @@ fun InventoryPartEntity.toModel(repairTitle: String?): PartInventoryItem = PartI
     purchasePrice = purchasePrice,
     realOemUrl = realOemUrl,
     photoUri = photoUri,
-    repairId = repairId
+    repairId = repairId,
+    originShoppingItemId = originShoppingItemId,
+    locationNote = locationNote,
+    createdAtEpochMillis = createdAtEpochMillis,
+    updatedAtEpochMillis = updatedAtEpochMillis
 )
 
 fun PartInventoryItem.toEntity(
@@ -63,7 +61,7 @@ fun PartInventoryItem.toEntity(
     locationNote: String = "",
 ): InventoryPartEntity = InventoryPartEntity(
     inventoryPartId = id,
-    originShoppingItemId = originShoppingItemId,
+    originShoppingItemId = originShoppingItemId ?: this.originShoppingItemId,
     repairId = repairId,
     oemPartNumber = oemPartNumber,
     manufacturerPartNumber = manufacturerPartNumber,
@@ -73,7 +71,7 @@ fun PartInventoryItem.toEntity(
     purchasePrice = purchasePrice,
     realOemUrl = realOemUrl,
     photoUri = photoUri,
-    locationNote = locationNote,
-    createdAtEpochMillis = createdAtEpochMillis,
-    updatedAtEpochMillis = updatedAtEpochMillis
+    locationNote = locationNote.ifBlank { this.locationNote },
+    createdAtEpochMillis = createdAtEpochMillis.takeIf { it > 0L } ?: this.createdAtEpochMillis,
+    updatedAtEpochMillis = updatedAtEpochMillis.takeIf { it > 0L } ?: this.updatedAtEpochMillis
 )

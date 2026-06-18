@@ -27,6 +27,7 @@ val releaseVersionCode = intConfig("APP_VERSION_CODE", 1)
 val releaseVersionName = stringConfig("APP_VERSION_NAME", "0.1.0")
 val aiAssistantBaseUrl = optionalConfig("AI_ASSISTANT_BASE_URL").orEmpty()
 val useFirebaseAiLogic = stringConfig("USE_FIREBASE_AI_LOGIC", "false").toBoolean()
+val enableDebugCoverage = stringConfig("ENABLE_DEBUG_COVERAGE", "false").toBoolean()
 val hasFirebaseConfig = file("google-services.json").exists()
 val signingStoreFilePath = optionalConfig("ANDROID_SIGNING_STORE_FILE")
 val signingStorePassword = optionalConfig("ANDROID_SIGNING_STORE_PASSWORD")
@@ -70,8 +71,8 @@ android {
 
     buildTypes {
         debug {
-            enableUnitTestCoverage = true
-            enableAndroidTestCoverage = true
+            enableUnitTestCoverage = enableDebugCoverage
+            enableAndroidTestCoverage = enableDebugCoverage
         }
 
         release {
@@ -91,6 +92,18 @@ android {
         buildConfig = true
     }
 
+    androidResources {
+        noCompress += setOf(
+            "pb",
+            "binarypb",
+            "tflite",
+            "fb",
+            "bincfg",
+            "conv_model",
+            "lstm_model"
+        )
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -108,11 +121,20 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    packaging {
+        resources {
+            pickFirsts += setOf(
+                "META-INF/**"
+            )
+        }
+    }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.firebase.bom))
     implementation(platform(libs.androidx.compose.bom))
@@ -206,6 +228,21 @@ tasks.register<JacocoReport>("jacocoDebugCombinedCoverageReport") {
             )
         }
     )
+}
+
+val cleanupBrokenDebugGeneratedClasses by tasks.registering(Delete::class) {
+    delete(
+        layout.buildDirectory.dir(
+            "intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes/pl/garage 2"
+        ),
+        layout.buildDirectory.dir(
+            "intermediates/classes/debug/jacocoDebug/dirs/pl/garage 2"
+        )
+    )
+}
+
+tasks.named("preBuild") {
+    dependsOn(cleanupBrokenDebugGeneratedClasses)
 }
 
 if (file("google-services.json").exists()) {

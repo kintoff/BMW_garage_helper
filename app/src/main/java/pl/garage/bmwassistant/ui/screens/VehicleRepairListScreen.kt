@@ -124,6 +124,7 @@ import pl.garage.bmwassistant.ui.components.BottomNavBar
 import pl.garage.bmwassistant.ui.components.GaragePanel
 import pl.garage.bmwassistant.ui.components.SegmentTabs
 import pl.garage.bmwassistant.ui.components.StatusBadge
+import pl.garage.bmwassistant.ui.components.garageBottomContentPadding
 import pl.garage.bmwassistant.ui.components.iconResource
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 import kotlinx.coroutines.Dispatchers
@@ -156,6 +157,10 @@ fun VehicleRepairListScreen(
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
+    onInventoryPartAddedAndShoppingListUpdated: (PartInventoryItem, List<ShoppingListItem>) -> Unit = { part, items ->
+        onInventoryPartAdded(part)
+        onShoppingListUpdated(items)
+    },
     onExportRepair: ((RepairProject) -> Unit)? = null,
     onImportRepair: (() -> Unit)? = null,
     onInitialRepairClosed: () -> Unit = {},
@@ -237,6 +242,7 @@ fun VehicleRepairListScreen(
             onAddShoppingItems = onAddShoppingItems,
             onShoppingListUpdated = onShoppingListUpdated,
             onInventoryPartAdded = onInventoryPartAdded,
+            onInventoryPartAddedAndShoppingListUpdated = onInventoryPartAddedAndShoppingListUpdated,
             onExportRepair = onExportRepair,
             onRepairUpdated = { updatedRepair ->
                 selectedRepairId = updatedRepair.id
@@ -291,7 +297,12 @@ fun VehicleRepairListScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 96.dp),
+                contentPadding = PaddingValues(
+                    start = 18.dp,
+                    top = 18.dp,
+                    end = 18.dp,
+                    bottom = garageBottomContentPadding(hasBottomBar = true)
+                ),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
@@ -932,6 +943,7 @@ private fun RepairDetailsScreen(
     onAddShoppingItems: (List<ShoppingListItem>) -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
+    onInventoryPartAddedAndShoppingListUpdated: (PartInventoryItem, List<ShoppingListItem>) -> Unit,
     onExportRepair: ((RepairProject) -> Unit)? = null,
     onRepairUpdated: (RepairProject) -> Unit,
     bottomBar: (@Composable BoxScope.() -> Unit)? = null,
@@ -962,7 +974,7 @@ private fun RepairDetailsScreen(
                     start = 18.dp,
                     top = 18.dp,
                     end = 18.dp,
-                    bottom = if (bottomBar == null) 18.dp else 96.dp
+                    bottom = garageBottomContentPadding(hasBottomBar = bottomBar != null)
                 ),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -999,7 +1011,8 @@ private fun RepairDetailsScreen(
                             onOpenShoppingListItem = { item -> onOpenShoppingListItem(repair, item) },
                             onOpenCatalog = { isCatalogVisible = true },
                             onShoppingListUpdated = onShoppingListUpdated,
-                            onInventoryPartAdded = onInventoryPartAdded
+                            onInventoryPartAdded = onInventoryPartAdded,
+                            onInventoryPartAddedAndShoppingListUpdated = onInventoryPartAddedAndShoppingListUpdated
                         )
                     }
                     "Dokumentacja" -> item {
@@ -1269,6 +1282,7 @@ private fun RepairPartsTab(
     onOpenCatalog: () -> Unit,
     onShoppingListUpdated: (List<ShoppingListItem>) -> Unit,
     onInventoryPartAdded: (PartInventoryItem) -> Unit,
+    onInventoryPartAddedAndShoppingListUpdated: (PartInventoryItem, List<ShoppingListItem>) -> Unit,
 ) {
     var itemPendingReceive by remember { mutableStateOf<ShoppingListItem?>(null) }
     var isAddInventoryDialogVisible by remember { mutableStateOf(false) }
@@ -1281,8 +1295,10 @@ private fun RepairPartsTab(
             ReceiveRepairShoppingItemDialog(
                 item = item,
                 onConfirm = { receivedQuantity ->
-                    onInventoryPartAdded(item.toInventoryPart(nextInventoryId(availableParts), receivedQuantity))
-                    onShoppingListUpdated(allShoppingItems.afterReceiving(item, receivedQuantity))
+                    onInventoryPartAddedAndShoppingListUpdated(
+                        item.toInventoryPart(nextInventoryId(availableParts), receivedQuantity),
+                        allShoppingItems.afterReceiving(item, receivedQuantity)
+                    )
                     itemPendingReceive = null
                 },
                 onDismiss = { itemPendingReceive = null }
@@ -1399,7 +1415,8 @@ private fun ShoppingPartSummaryRow(
         title = item.name,
         subtitle = item.manufacturerPartNumber.ifBlank { item.partNumber.ifBlank { item.source } },
         quantity = "${item.quantity} szt.",
-        value = item.price,
+        value = item.totalPriceLabel(),
+        unitValue = item.unitPriceInfoLabel(),
         badgeText = if (isArchived) "Historia" else "▣",
         badgeColor = AccentBlue,
         photoUri = item.imageUri,
@@ -1417,7 +1434,8 @@ private fun InventoryPartSummaryRow(
         title = part.name,
         subtitle = part.manufacturerPartNumber.ifBlank { part.partNumber },
         quantity = "${part.quantity} szt.",
-        value = part.purchasePrice,
+        value = part.totalPurchasePriceLabel(),
+        unitValue = part.unitPurchasePriceInfoLabel(),
         badgeText = if (neededQuantity > 0) "${part.quantity}/$neededQuantity" else "Na stanie",
         badgeColor = if (neededQuantity > 0 && part.quantity < neededQuantity) AccentYellow else AccentGreen,
         photoUri = part.photoUri
@@ -1432,6 +1450,7 @@ private fun PartSummaryRow(
     value: String,
     badgeText: String,
     badgeColor: Color,
+    unitValue: String? = null,
     photoUri: String? = null,
     onBadgeClick: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
@@ -1488,6 +1507,14 @@ private fun PartSummaryRow(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold
             )
+            unitValue?.let { label ->
+                Text(
+                    text = label,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
             Surface(
                 modifier = Modifier
                     .then(if (onBadgeClick != null) Modifier.clickable(onClick = onBadgeClick) else Modifier),

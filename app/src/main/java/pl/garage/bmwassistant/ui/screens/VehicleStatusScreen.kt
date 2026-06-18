@@ -49,6 +49,7 @@ import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.SectionTitle
+import pl.garage.bmwassistant.ui.components.garageBottomContentPadding
 import pl.garage.bmwassistant.ui.components.iconResource
 import pl.garage.bmwassistant.ui.theme.GarageTheme
 
@@ -72,7 +73,7 @@ fun VehicleStatusScreen(
                     start = 18.dp,
                     top = 18.dp,
                     end = 18.dp,
-                    bottom = if (bottomBar == null) 18.dp else 96.dp
+                    bottom = garageBottomContentPadding(hasBottomBar = bottomBar != null)
                 ),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {

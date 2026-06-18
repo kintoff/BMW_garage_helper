@@ -16,10 +16,17 @@ import pl.garage.bmwassistant.database.vehicle.TorqueDiagramAssignmentEntity
 import pl.garage.bmwassistant.database.vehicle.TorqueSpecEntity
 import pl.garage.bmwassistant.database.vehicle.TorqueSpecTableEntity
 import pl.garage.bmwassistant.database.vehicle.VehicleDatabase
+import pl.garage.bmwassistant.database.vehicle.INVENTORY_HISTORY_EDITED
+import pl.garage.bmwassistant.database.vehicle.INVENTORY_HISTORY_QUANTITY_DECREASED
+import pl.garage.bmwassistant.database.vehicle.INVENTORY_HISTORY_QUANTITY_INCREASED
+import pl.garage.bmwassistant.database.vehicle.INVENTORY_HISTORY_REMOVED
+import pl.garage.bmwassistant.database.vehicle.InventoryHistoryEventEntity
+import pl.garage.bmwassistant.database.vehicle.initialHistoryEvent
 import pl.garage.bmwassistant.database.vehicle.toArchivedEntity
 import pl.garage.bmwassistant.database.vehicle.toEntity
 import pl.garage.bmwassistant.database.vehicle.toModel
 import pl.garage.bmwassistant.database.vehicle.toVehicleArea
+import pl.garage.bmwassistant.model.InventoryHistoryEvent
 import pl.garage.bmwassistant.model.PartInventoryItem
 import pl.garage.bmwassistant.model.RepairDocumentation
 import pl.garage.bmwassistant.model.RepairProject
@@ -33,6 +40,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -74,6 +82,129 @@ class GarageRepository(
             shoppingList = shoppingList,
             inventoryParts = inventoryParts
         )
+    }
+
+    suspend fun getInventoryParts(vehicleId: String): List<PartInventoryItem> {
+        val database = vehicleDatabaseManager.openVehicleDatabase(vehicleId)
+        val repairs = loadRepairs(database, vehicleName = "")
+        return loadInventoryParts(
+            database = database,
+            repairTitlesById = repairs.associateBy({ it.id }, { it.title })
+        )
+    }
+
+    suspend fun getInventoryHistory(vehicleId: String): List<InventoryHistoryEvent> {
+        val database = vehicleDatabaseManager.openVehicleDatabase(vehicleId)
+        return database.inventoryHistoryDao()
+            .getAllEvents()
+            .map { it.toModel() }
+    }
+
+    suspend fun addInventoryPart(
+        vehicleId: String,
+        part: PartInventoryItem,
+    ): PartInventoryItem {
+        val database = vehicleDatabaseManager.openVehicleDatabase(vehicleId)
+        val now = System.currentTimeMillis()
+        val normalizedPart = part.copy(
+            id = part.id.ifBlank { UUID.randomUUID().toString() },
+            createdAtEpochMillis = part.createdAtEpochMillis.takeIf { it > 0L } ?: now,
+            updatedAtEpochMillis = part.updatedAtEpochMillis.takeIf { it > 0L } ?: now
+        )
+        val entity = normalizedPart.toEntity(
+            createdAtEpochMillis = normalizedPart.createdAtEpochMillis,
+            updatedAtEpochMillis = normalizedPart.updatedAtEpochMillis
+        )
+
+        database.withTransaction {
+            database.inventoryPartDao().insert(entity)
+            database.inventoryHistoryDao().insert(entity.initialHistoryEvent())
+        }
+        return normalizedPart
+    }
+
+    suspend fun updateInventoryPart(
+        vehicleId: String,
+        part: PartInventoryItem,
+    ): PartInventoryItem {
+        val database = vehicleDatabaseManager.openVehicleDatabase(vehicleId)
+        val now = System.currentTimeMillis()
+        val inventoryDao = database.inventoryPartDao()
+        val current = inventoryDao.getPartById(part.id)
+        val normalizedPart = part.copy(
+            createdAtEpochMillis = current?.createdAtEpochMillis
+                ?: part.createdAtEpochMillis.takeIf { it > 0L }
+                ?: now,
+            updatedAtEpochMillis = now,
+            originShoppingItemId = part.originShoppingItemId ?: current?.originShoppingItemId
+        )
+        val entity = normalizedPart.toEntity(
+            createdAtEpochMillis = normalizedPart.createdAtEpochMillis,
+            updatedAtEpochMillis = normalizedPart.updatedAtEpochMillis
+        )
+        val quantityDelta = normalizedPart.quantity - (current?.quantity ?: normalizedPart.quantity)
+        val eventType = when {
+            quantityDelta > 0 -> INVENTORY_HISTORY_QUANTITY_INCREASED
+            quantityDelta < 0 -> INVENTORY_HISTORY_QUANTITY_DECREASED
+            else -> INVENTORY_HISTORY_EDITED
+        }
+        val title = when (eventType) {
+            INVENTORY_HISTORY_QUANTITY_INCREASED -> "Zwiększono ilość"
+            INVENTORY_HISTORY_QUANTITY_DECREASED -> "Zmniejszono ilość"
+            else -> "Edytowano część"
+        }
+
+        database.withTransaction {
+            inventoryDao.update(entity)
+            database.inventoryHistoryDao().insert(
+                InventoryHistoryEventEntity(
+                    eventId = UUID.randomUUID().toString(),
+                    inventoryPartId = entity.inventoryPartId,
+                    eventType = eventType,
+                    title = title,
+                    quantityDelta = quantityDelta,
+                    quantityAfter = entity.quantity,
+                    createdAtEpochMillis = now
+                )
+            )
+        }
+        return normalizedPart
+    }
+
+    suspend fun deleteInventoryPart(
+        vehicleId: String,
+        partId: String,
+    ) {
+        val database = vehicleDatabaseManager.openVehicleDatabase(vehicleId)
+        val inventoryDao = database.inventoryPartDao()
+        val current = inventoryDao.getPartById(partId)
+        val now = System.currentTimeMillis()
+
+        database.withTransaction {
+            if (current != null) {
+                database.inventoryHistoryDao().insert(
+                    InventoryHistoryEventEntity(
+                        eventId = UUID.randomUUID().toString(),
+                        inventoryPartId = current.inventoryPartId,
+                        eventType = INVENTORY_HISTORY_REMOVED,
+                        title = "Usunięto z magazynu",
+                        quantityDelta = -current.quantity,
+                        quantityAfter = 0,
+                        createdAtEpochMillis = now
+                    )
+                )
+            }
+            inventoryDao.deleteById(partId)
+        }
+    }
+
+    suspend fun addInventoryHistoryEvent(
+        vehicleId: String,
+        event: InventoryHistoryEvent,
+    ) {
+        vehicleDatabaseManager.openVehicleDatabase(vehicleId)
+            .inventoryHistoryDao()
+            .insert(event.toEntity())
     }
 
     suspend fun saveVehicleSnapshot(
@@ -459,17 +590,23 @@ class GarageRepository(
         inventoryParts: List<PartInventoryItem>,
     ) {
         val inventoryDao = database.inventoryPartDao()
+        val historyDao = database.inventoryHistoryDao()
         inventoryDao.clearAll()
         val now = System.currentTimeMillis()
         val entities = inventoryParts.mapIndexed { index, part ->
             val partId = part.id.ifBlank { "${part.repairId ?: "inventory"}_part_$index" }
             part.copy(id = partId).toEntity(
-                createdAtEpochMillis = now,
-                updatedAtEpochMillis = now
+                createdAtEpochMillis = part.createdAtEpochMillis.takeIf { it > 0L } ?: now,
+                updatedAtEpochMillis = part.updatedAtEpochMillis.takeIf { it > 0L } ?: now
             )
         }
         if (entities.isNotEmpty()) {
             inventoryDao.insertAll(entities)
+            entities.forEach { entity ->
+                if (historyDao.getEventsForPart(entity.inventoryPartId).isEmpty()) {
+                    historyDao.insert(entity.initialHistoryEvent())
+                }
+            }
         }
     }
 

@@ -98,6 +98,10 @@ internal fun PartInventoryItem.toJson(): JSONObject = JSONObject()
     .put("purchasePrice", purchasePrice)
     .put("realOemUrl", realOemUrl)
     .put("photoUri", photoUri)
+    .put("originShoppingItemId", originShoppingItemId)
+    .put("locationNote", locationNote)
+    .put("createdAtEpochMillis", createdAtEpochMillis)
+    .put("updatedAtEpochMillis", updatedAtEpochMillis)
 
 internal fun JSONObject.toPartInventoryItem(vehicle: Vehicle): PartInventoryItem = PartInventoryItem(
     id = optString("id"),
@@ -118,7 +122,11 @@ internal fun JSONObject.toPartInventoryItem(vehicle: Vehicle): PartInventoryItem
                 vehicleName = vehicle.displayName
             )
         }
-    }
+    },
+    originShoppingItemId = optString("originShoppingItemId").ifBlank { null },
+    locationNote = optString("locationNote"),
+    createdAtEpochMillis = optLong("createdAtEpochMillis", 0L),
+    updatedAtEpochMillis = optLong("updatedAtEpochMillis", 0L)
 )
 
 internal fun ShoppingListItem.toJson(): JSONObject = JSONObject()

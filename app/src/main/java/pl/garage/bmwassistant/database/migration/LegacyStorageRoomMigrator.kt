@@ -21,6 +21,7 @@ import pl.garage.bmwassistant.database.vehicle.TorqueSpecEntity
 import pl.garage.bmwassistant.database.vehicle.TorqueSpecTableEntity
 import pl.garage.bmwassistant.database.vehicle.VehicleDatabase
 import pl.garage.bmwassistant.database.vehicle.YoutubeVideoEntity
+import pl.garage.bmwassistant.database.vehicle.initialHistoryEvent
 import pl.garage.bmwassistant.database.vehicle.toArchivedEntity
 import pl.garage.bmwassistant.database.vehicle.toEntity
 import pl.garage.bmwassistant.model.PersonalDocumentationItem
@@ -153,16 +154,18 @@ class LegacyStorageRoomMigrator(
         parts: List<pl.garage.bmwassistant.model.PartInventoryItem>,
     ) {
         val inventoryDao = database.inventoryPartDao()
+        val historyDao = database.inventoryHistoryDao()
         val now = System.currentTimeMillis()
         val entities = parts.mapIndexed { index, part ->
             val inventoryId = part.id.ifBlank { "${part.repairId ?: "inventory"}_part_$index" }
             part.copy(id = inventoryId).toEntity(
-                createdAtEpochMillis = now,
-                updatedAtEpochMillis = now
+                createdAtEpochMillis = part.createdAtEpochMillis.takeIf { it > 0L } ?: now,
+                updatedAtEpochMillis = part.updatedAtEpochMillis.takeIf { it > 0L } ?: now
             )
         }
         if (entities.isNotEmpty()) {
             inventoryDao.insertAll(entities)
+            historyDao.insertAll(entities.map { it.initialHistoryEvent() })
         }
     }
 
