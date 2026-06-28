@@ -58,6 +58,7 @@ import pl.garage.bmwassistant.model.Vehicle
 import pl.garage.bmwassistant.model.VehicleArea
 import pl.garage.bmwassistant.model.isFinishedRepairStatus
 import pl.garage.bmwassistant.model.normalizedRepairStatusLabel
+import pl.garage.bmwassistant.feature.inventory.components.PartsStorageSection
 import pl.garage.bmwassistant.ui.components.Header
 import pl.garage.bmwassistant.ui.components.AccentBlue
 import pl.garage.bmwassistant.ui.components.AccentGreen

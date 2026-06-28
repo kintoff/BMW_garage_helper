@@ -172,3 +172,48 @@ internal fun PartInventoryItem.imageSearchUrl(): String {
     val query = java.net.URLEncoder.encode("$partNumber BMW $manufacturer czesc zdjecie", "UTF-8")
     return "https://www.google.com/search?tbm=isch&q=$query"
 }
+
+internal fun InventoryItemInput.toInventoryPart(
+    id: String,
+    createdAt: Long,
+    updatedAt: Long,
+    originShoppingItemId: String? = null,
+): PartInventoryItem = PartInventoryItem(
+    id = id,
+    oemPartNumber = oemPartNumber.ifBlank { "do uzupelnienia" },
+    manufacturerPartNumber = manufacturerPartNumber.ifBlank { oemPartNumber.ifBlank { "do uzupelnienia" } },
+    name = name,
+    manufacturer = manufacturer.ifBlank { "do uzupelnienia" },
+    repairTitle = repairTitle,
+    quantity = quantity.coerceAtLeast(1),
+    purchasePrice = purchasePrice.ifBlank { "do uzupelnienia" },
+    realOemUrl = realOemUrl,
+    photoUri = photoUri,
+    repairId = repairId,
+    originShoppingItemId = originShoppingItemId,
+    locationNote = locationNote,
+    createdAtEpochMillis = createdAt,
+    updatedAtEpochMillis = updatedAt
+)
+
+internal fun ShoppingListItem.toInventoryPart(
+    id: String,
+    quantity: Int,
+    createdAt: Long,
+    updatedAt: Long,
+): PartInventoryItem = PartInventoryItem(
+    id = id,
+    oemPartNumber = partNumber.ifBlank { "do uzupelnienia" },
+    manufacturerPartNumber = manufacturerPartNumber.ifBlank { partNumber.ifBlank { "do uzupelnienia" } },
+    name = name,
+    manufacturer = manufacturer.ifBlank { "do uzupelnienia" },
+    repairTitle = repairTitle.ifBlank { null },
+    quantity = quantity.coerceAtLeast(1),
+    purchasePrice = price.ifBlank { "do uzupelnienia" },
+    realOemUrl = realOemUrl,
+    photoUri = imageUri,
+    repairId = repairId.ifBlank { null },
+    originShoppingItemId = this.id,
+    createdAtEpochMillis = createdAt,
+    updatedAtEpochMillis = updatedAt
+)

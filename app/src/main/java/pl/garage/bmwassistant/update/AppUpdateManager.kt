@@ -16,6 +16,8 @@ import java.net.URL
 import java.security.MessageDigest
 import kotlin.math.max
 
+private const val ApkMimeType = "application/vnd.android.package-archive"
+
 class AppUpdateManager(
     private val context: Context,
 ) {
@@ -109,26 +111,7 @@ class AppUpdateManager(
                 "${context.packageName}.fileprovider",
                 apkFile
             )
-            val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
-                data = apkUri
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                putExtra(Intent.EXTRA_RETURN_RESULT, false)
-            }
-            context.startActivity(installIntent)
-            true
-        }.recoverCatching {
-            val fallbackUri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                apkFile
-            )
-            val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(fallbackUri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(fallbackIntent)
+            context.startActivity(createApkInstallIntent(apkUri))
             true
         }.getOrDefault(false)
 
@@ -189,6 +172,13 @@ class AppUpdateManager(
     private fun releasesUrl(): String =
         "https://api.github.com/repos/$repoOwner/$repoName/releases"
 }
+
+private fun createApkInstallIntent(apkUri: Uri): Intent =
+    Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(apkUri, ApkMimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
 
 data class AppUpdateRelease(
     val versionName: String,
