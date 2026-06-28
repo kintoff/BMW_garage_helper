@@ -14,6 +14,9 @@ interface ShoppingListDao {
     @Query("SELECT * FROM shopping_list_items WHERE repairId = :repairId ORDER BY updatedAtEpochMillis DESC")
     suspend fun getItemsForRepair(repairId: String): List<ShoppingListItemEntity>
 
+    @Query("SELECT * FROM shopping_list_items WHERE shoppingItemId = :shoppingItemId LIMIT 1")
+    suspend fun getItemById(shoppingItemId: String): ShoppingListItemEntity?
+
     @Query("DELETE FROM shopping_list_items")
     suspend fun clearAll()
 

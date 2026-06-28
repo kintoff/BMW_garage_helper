@@ -52,6 +52,11 @@ data class VehicleDataSnapshot(
     val inventoryParts: List<PartInventoryItem> = emptyList(),
 )
 
+data class AcceptShoppingItemResult(
+    val inventoryPart: PartInventoryItem,
+    val remainingShoppingQuantity: Int,
+)
+
 class GarageRepository(
     context: Context,
 ) {
@@ -196,6 +201,67 @@ class GarageRepository(
             }
             inventoryDao.deleteById(partId)
         }
+    }
+
+    suspend fun acceptShoppingItemToInventory(
+        vehicleId: String,
+        shoppingItemId: String,
+        quantity: Int,
+    ): AcceptShoppingItemResult {
+        val database = vehicleDatabaseManager.openVehicleDatabase(vehicleId)
+        val shoppingDao = database.shoppingListDao()
+        val repairDao = database.repairProjectDao()
+        val now = System.currentTimeMillis()
+        val receivedQuantity = quantity.coerceAtLeast(1)
+        val shoppingItem = shoppingDao.getItemById(shoppingItemId)
+            ?: throw IllegalArgumentException("Shopping item not found: $shoppingItemId")
+        val quantityToReceive = receivedQuantity.coerceAtMost(shoppingItem.quantity.coerceAtLeast(1))
+        val repairTitle = shoppingItem.repairId
+            .takeIf { it.isNotBlank() }
+            ?.let { repairDao.getRepairById(it)?.title }
+        val inventoryPart = PartInventoryItem(
+            id = UUID.randomUUID().toString(),
+            oemPartNumber = shoppingItem.partNumber.ifBlank { "do uzupelnienia" },
+            manufacturerPartNumber = shoppingItem.manufacturerPartNumber.ifBlank {
+                shoppingItem.partNumber.ifBlank { "do uzupelnienia" }
+            },
+            name = shoppingItem.name,
+            manufacturer = shoppingItem.manufacturer.ifBlank { "do uzupelnienia" },
+            repairTitle = repairTitle,
+            quantity = quantityToReceive,
+            purchasePrice = shoppingItem.price.ifBlank { "do uzupelnienia" },
+            realOemUrl = shoppingItem.realOemUrl,
+            photoUri = shoppingItem.imageUri,
+            repairId = shoppingItem.repairId.ifBlank { null },
+            originShoppingItemId = shoppingItem.shoppingItemId,
+            createdAtEpochMillis = now,
+            updatedAtEpochMillis = now
+        )
+        val inventoryEntity = inventoryPart.toEntity(
+            createdAtEpochMillis = now,
+            updatedAtEpochMillis = now
+        )
+        val remainingQuantity = shoppingItem.quantity - quantityToReceive
+
+        database.withTransaction {
+            database.inventoryPartDao().insert(inventoryEntity)
+            database.inventoryHistoryDao().insert(inventoryEntity.initialHistoryEvent())
+            if (remainingQuantity > 0) {
+                shoppingDao.update(
+                    shoppingItem.copy(
+                        quantity = remainingQuantity,
+                        updatedAtEpochMillis = now
+                    )
+                )
+            } else {
+                shoppingDao.deleteById(shoppingItem.shoppingItemId)
+            }
+        }
+
+        return AcceptShoppingItemResult(
+            inventoryPart = inventoryPart,
+            remainingShoppingQuantity = remainingQuantity.coerceAtLeast(0)
+        )
     }
 
     suspend fun addInventoryHistoryEvent(
